@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="com.farsononline.shoki" path="/com/farsononline/shoki/">
+    <key name="endpoint-url" type="s">
+      <default>'http://127.0.0.1:8080/inference'</default>
+      <summary>Transcription endpoint URL</summary>
+      <description>
+        Full URL of the whisper.cpp server's inference endpoint. The shipped
+        default is the route an unflagged whisper.cpp server serves. Deployments
+        started with --inference-path serve a different route instead.
+      </description>
+    </key>
+  </schema>
+</schemalist>

@@ -41,6 +41,22 @@ A language selector for when auto-detect misfires.
 > upstream README's incomplete parameter list. Auto-detect handles the common case; detection gets
 > unreliable on short or noisy clips, which is what this is for. Belongs in the advanced drawer.
 
+### 2026-08-13 — Upload percentage for the POST body
+
+A true progress bar for the request upload, distinct from the impossible inference progress bar.
+
+> **Deferred, not blocked** — pulled out of Phase 2 on 2026-08-13 by the author, on the grounds that
+> it measures nothing worth watching when the server is on loopback. It was originally the reason the
+> Phase 1 HTTP library had to support body-upload reporting.
+>
+> The capability survived the decision. `SoupMessage::wrote-body-data` emits the number of bytes
+> written as the body goes out, so this remains an addition rather than a rewrite. Whether it fires
+> repeatedly for a body supplied as a single `GBytes`, or only once at the end, has not been
+> observed — check that before promising it.
+>
+> **Bring it back when:** Shoki is used from a machine other than the one running the server, over
+> the tailnet, where a large file takes long enough that silence looks like a hang.
+
 ### 2026-08-13 — Batch queue interface
 
 Per-file status, reordering, retry of individual failures, cancel remaining.

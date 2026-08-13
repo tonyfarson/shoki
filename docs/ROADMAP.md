@@ -88,7 +88,19 @@ thirty form fields:
 - Not read from requests — `threads` and `no_context` are startup options only
 
 `response_format` is branched on five string literals: `text`, `srt`, `vtt`, `verbose_json`, and
-`json` as the default fallback.
+`json` as the default fallback. The `json` reply is shaped `{"text": "..."}` — assumed while writing
+Phase 1, then observed against the running server on 2026-08-13.
+
+Input formats are a property of server *flags*, not of the API. The README states that "WAV Files are
+passed to the inference model via http requests", and it is `--convert` — documented as "Convert
+audio to WAV, requires ffmpeg on the server" — that admits anything else. The Otachi container passes
+it, confirmed 2026-08-13 from its compose command, which is why mp3 and video files work there.
+
+> **Warning:** Shoki cannot detect this. No route reports the server's startup flags. An unflagged
+> whisper.cpp server accepts WAV only, so the file picker's audio-and-video filter is optimistic on
+> anyone else's deployment. Phase 4's README must state the `--convert` requirement plainly.
+
+`GET /health` answers normally while an inference is in flight — measured in Phase 1.
 
 Behaviour that constrains design:
 
@@ -262,16 +274,45 @@ Two choices to make deliberately during Phase 1, because reversing them later is
 
 One test belongs in this phase, deferred from Phase 0.5 as a labelled assumption:
 
-- [ ] Does `GET /health` still answer while an inference is in flight? The liveness indicator in
-      Phase 2 depends on it. Assume nothing until it is observed.
+- [x] Does `GET /health` still answer while an inference is in flight? **Yes** — verified
+      2026-08-13. Twenty-four consecutive polls at one-second intervals during an outstanding POST,
+      every one HTTP 200 in 0.0004–0.0008 s, against a job that took 46.6 s in total. No queueing,
+      no degradation.
+
+> **Note:** This proves the HTTP server is still *serving*. It does not prove the inference is
+> *progressing* — `/health` returns a static OK and knows nothing about the model. The Phase 2
+> indicator can honestly distinguish "alive and reachable" from "dead, wedged, or unreachable"; it
+> cannot detect a stalled inference on a live server. Word the interface to match what it knows.
+
+Decided during Phase 1:
+
+- **HTTP library — libsoup 3**, over `requests` plus `requests-toolbelt`. The deciding argument was
+  not upload progress but threads. GNOME's threading tutorial states that "the default approach
+  should be to never use threads", directing callers to asynchronous operations on the GLib main
+  context instead. libsoup is async-native, so Shoki has no worker threads at all. It also adds no
+  Python dependency, which matters across four packaging formats in Phase 3, and its
+  `send_and_read_async` takes a `GCancellable` — making Phase 2's cancel a documented parameter
+  rather than an invention.
+- **`Soup.Multipart.to_message()` writes Content-Type including the multipart boundary.** The body is
+  then attached with `set_request_body_from_bytes(None, body)`, and that `None` is load-bearing:
+  passing a content-type string overwrites the boundary and the server cannot parse the request.
+- **A missing GSettings schema must not be fatal.** `g_settings_new()` treats an absent schema as a
+  programmer error and takes the process down, so Shoki looks the schema up through
+  `Gio.SettingsSchemaSource` first and falls back to the shipped default with a message on stderr.
+  Same rule the Dolphin service menu follows in Phase 3.
 
 Stopping condition: an audio file picked in the app produces a correct transcript in the output area,
 against the Otachi server.
 
+Met 2026-08-13. An mp3 chosen through `Gtk.FileDialog` transcribed correctly against the Otachi
+server, the window stayed responsive and draggable throughout, and the endpoint came from GSettings
+rather than from anything hardcoded. The shipped `/inference` default returned 404 first, exactly as
+intended — the configuration path was exercised on day one instead of shipped untested.
+
 Explicitly not in Phase 1: save, copy, settings, batch, drag and drop, translation, format choice,
 progress, threading, keyboard shortcuts, Dolphin integration, styling beyond default libadwaita.
 
-Status: ⏳ Not started
+Status: ✅ Complete — 2026-08-13
 
 ---
 
@@ -282,7 +323,10 @@ else.
 
 Deliverables:
 
-- Threading — transcription runs on a worker thread and the UI stays responsive
+- Asynchronous requests — transcription runs on the GLib main context and the UI stays responsive.
+  Already true as of Phase 1; this line now means keeping it true as features are added. Renamed
+  from "Threading" on 2026-08-13, because libsoup is async-native and GNOME's own guidance is to
+  reach for threads last rather than first.
 - Output format picker — `text` (default), `srt`, `vtt`, `json`, `verbose_json`
 - Translate to English — a checkbox
 - Initial prompt field — a large accuracy win for proper nouns and jargon
@@ -302,10 +346,14 @@ Progress and liveness — three honest indicators, no invented percentages:
   100%.
 - **Batch counter** — "file 3 of 12" is measurable and true. The progress bar exists; it measures
   files, not audio.
-- **Upload percentage** — the POST body upload is measurable, and matters for large files over a
-  network. Depends on the Phase 1 library choice.
-- **Liveness via `GET /health`**, polled on a second connection during a job, distinguishing "server
-  wedged" from "server working". Conditional on the Phase 1 test.
+- **Upload percentage** — deferred 2026-08-13 at the author's call, as pointless against a server on
+  localhost. The capability is retained rather than lost: `SoupMessage::wrote-body-data` reports
+  bytes written, so this stays an addition rather than becoming a rewrite. It returns if Shoki is
+  ever used from a second machine over the tailnet. See `FUTURE.md`.
+- **Liveness via `GET /health`**, polled on a second connection during a job. Confirmed viable by the
+  Phase 1 test. It distinguishes "server alive and reachable" from "server dead, wedged, or
+  unreachable". It cannot see a stalled inference on a healthy server, so the interface must not
+  claim to show that.
 
 Cancel:
 
@@ -321,8 +369,19 @@ Output destination and filenames:
   runtime. `~/Nextcloud/Documents/Transcriptions/` is a personal setting, not a shipped default.
 - **Collision rule: append a numeric suffix** — `interview.txt`, then `interview_1.txt`. Never
   overwrite silently.
+
+> **Open, found 2026-08-13:** the existing Dolphin helper script appends a *hyphen* — `foo-1.txt` —
+> while this roadmap specifies an *underscore*. From Phase 3 onward both write into the same
+> destination directory. Pick one convention before that happens, rather than shipping a folder that
+> uses two.
 - Under Flatpak the destination is chosen once through the folder-chooser portal and the result
   stored, rather than declared as a static filesystem permission. See Phase 3.
+
+> **Open, found 2026-08-13:** Whisper returns each segment prefixed with a space and the server joins
+> them with newlines, so a transcript renders as one indented line per sentence. `.strip()` only
+> cleans the ends of the whole string. Decide this alongside the output format picker — one line per
+> sentence is useful for `srt` and `vtt` and unhelpful for prose. Whatever is chosen, the saved
+> `text` output and the on-screen view should agree.
 
 Language auto-detect is always on and has no control. A manual language override is deferred to the
 advanced drawer — see `FUTURE.md`.
@@ -489,6 +548,35 @@ Corrections made to prior documentation:
   Dolphin integration removed the conflict entirely, and both formats now ship.
 
 Ideas rejected during this phase, with reasons, are in `FUTURE.md`.
+
+### Phase 1 — Walking Skeleton — completed 2026-08-13
+
+An end-to-end path exists: choose a file, POST it as multipart, read the transcript. Built as
+`src/shoki/transcribe.py` (no knowledge of the GUI) and a rewritten `src/shoki/main.py`.
+
+What the skeleton was for — finding out what is actually hard — paid off in five places:
+
+- The HTTP library question resolved to libsoup 3 on a stronger argument than the one that motivated
+  the constraint. The upload percentage that made it load-bearing was dropped mid-phase; the reason
+  to keep libsoup was that it removes threading from the project entirely.
+- `set_request_body_from_bytes` needs `None` as its content type, or the multipart boundary written
+  by `to_message()` is overwritten and every request fails. The natural thing to write is wrong.
+- The `json` reply shape was an assumption in the code, labelled as one, and is now observed.
+- `GET /health` answers during an inference, which keeps the Phase 2 liveness indicator alive — with
+  a narrower promise than the word "health" suggests.
+- Input format support turned out to be a server startup flag rather than an API guarantee, which
+  makes the file picker's filter a local truth rather than a portable one.
+
+Two deliberate deviations from the plan, both agreed rather than assumed:
+
+- Requests were written asynchronously in Phase 1 although the roadmap permitted a blocking UI,
+  because with libsoup the async version was the same work and the blocking version would have been
+  discarded in Phase 2.
+- The upload percentage was removed from Phase 2 rather than built, on the grounds that it measures
+  nothing interesting over loopback.
+
+Everything in this phase was run on Otachi and its output pasted back. Nothing is recorded as
+verified on the strength of reasoning alone.
 
 ---
 
