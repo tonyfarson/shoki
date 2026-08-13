@@ -8,43 +8,58 @@ updated: 2026-08-13
 
 # Shoki
 
-Shoki (書記, "scribe") is a GTK4/libadwaita desktop application that provides a
-simple graphical frontend for a [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
-transcription server.
+Shoki (書記, "scribe") is a GTK4/libadwaita desktop application that provides a graphical
+control surface for a [whisper.cpp](https://github.com/ggml-org/whisper.cpp) transcription
+server — and ships a Dolphin service menu that transcribes any audio or video file by
+right-click, without opening the application at all.
 
-Pick an audio file, click Transcribe, read the transcript. That is the whole idea.
+Shoki does no transcription itself. It sends an audio file to a server you run, and shows
+you what comes back.
 
-> **Note:** This project is in Phase 0 (scaffolding). There is no working
-> application yet. See `docs/ROADMAP.md` for the development plan.
+> **Note:** This project is pre-release. There is no working application yet — Phase 0
+> (scaffolding) and Phase 0.5 (scoping) are complete, and Phase 1 has not started. See
+> `docs/ROADMAP.md` for the development plan.
 
 ## Status
 
 - App ID: `com.farsononline.shoki`
-- Platform: Linux only, packaged as a Flatpak
+- Platform: Linux only
 - License: MIT
-- Current phase: Phase 0 — Scaffolding (window runs; git and GitHub outstanding)
+- Current phase: Phase 1 — Walking Skeleton (not started)
+- First planned release: `v0.1.0`
+
+Both native packages and a Flatpak are planned. The Dolphin service menu is a standalone
+script that does not launch Shoki, which is what lets the Flatpak stay minimally
+permissioned. Native packages get tighter integration — the script reads the application's
+own settings — while the Flatpak's script falls back to its built-in defaults. See Phase 3
+in `docs/ROADMAP.md`.
 
 ## Requirements
 
-Shoki is a client. It does not transcribe anything itself — it talks to a
-whisper.cpp server that exposes the OpenAI-compatible transcription endpoint:
+Shoki is a client. It needs a whisper.cpp server, running separately, that you can reach
+over HTTP.
 
-```
-POST /v1/audio/transcriptions
-```
-
-Any whisper.cpp build serving that endpoint will work. The reference deployment
-used during development runs the Vulkan container image:
+The reference deployment used during development runs the Vulkan container image:
 
 ```
 ghcr.io/ggml-org/whisper.cpp:main-vulkan
 ```
 
-Default endpoint assumed by the app:
+An unflagged whisper.cpp server binds `127.0.0.1:8080` and serves its inference endpoint
+at:
 
 ```
-http://localhost:8080/v1/audio/transcriptions
+POST /inference
 ```
+
+That is the endpoint Shoki ships as its default.
+
+> **Note:** The path is configurable server-side. `--inference-path` *replaces* the default
+> route rather than adding to it, so a server started with
+> `--inference-path /v1/audio/transcriptions` serves only that path and returns 404 on
+> `/inference`. Shoki therefore treats the endpoint URL as configuration, not as a constant.
+> The upstream project makes no OpenAI-compatibility claim, and neither does Shoki —
+> compatibility with other transcription backends is a future goal, not a present fact.
 
 ## Running from Source
 
@@ -63,8 +78,8 @@ Runtime requirements (Arch/CachyOS package names):
 python python-gobject gtk4 libadwaita
 ```
 
-> **Note:** `PYTHONPATH=src` is a development convenience — the package is not installed to a
-> location Python searches by default. Flatpak packaging in Phase 3 removes the need for it.
+> **Note:** `PYTHONPATH=src` is a development convenience — the package is not installed to
+> a location Python searches by default. Packaging in Phase 3 removes the need for it.
 
 ## Repository Layout
 
@@ -74,8 +89,9 @@ shoki/
 │   ├── __init__.py
 │   ├── __main__.py     `python -m shoki` entry point
 │   └── main.py         application and window classes
-├── data/           icons, .desktop entry, appstream metadata
-├── build-aux/      Flatpak manifest
+├── data/           icons, .desktop entry, appstream metadata,
+│                   Dolphin service menu and helper script
+├── build-aux/      packaging manifests
 ├── docs/           project documentation
 │   └── ROADMAP.md  phased development plan
 ├── FUTURE.md       deferred ideas / scope-creep log
