@@ -53,8 +53,8 @@ Shoki is a GTK4/libadwaita desktop application (Python) that provides a simple G
 - [x] `.gitignore`, `LICENSE`, `README.md`, `FUTURE.md` written (2026-08-13)
 - [x] CachyOS prerequisites verified installed (2026-08-13)
 - [x] Hello-world window runs (2026-08-13)
-- [ ] `git init` + GitHub repo + `origin` remote
-- [ ] First commit pushed
+- [x] `git init` + GitHub repo + `origin` remote (2026-08-13)
+- [x] First commit pushed (2026-08-13)
 
 **Verified toolchain (2026-08-13):** python 3.14.6-2, python-gobject 3.56.3-1, gtk4 1:4.22.4-1.1,
 libadwaita 1:1.9.3-1.1, flatpak 1:1.18.0-1.1, flatpak-builder 1.4.10-1.1. PyGObject imports Gtk 4.0
@@ -80,7 +80,7 @@ whisper.cpp Vulkan backend and unrelated to Shoki.
 
 **Explicitly NOT in Phase 0:** any transcription logic, any HTTP calls, any settings UI, any Flatpak concern beyond making sure `flatpak-builder` is installed.
 
-**Status:** 🚧 In progress
+**Status:** ✅ Complete — 2026-08-13
 
 ---
 
@@ -314,7 +314,22 @@ Flatpak work. This phase produces documents and decisions only.
 
 ## Log of Completed Phases
 
-*(populated as phases finish)*
+### Phase 0 — Scaffolding — completed 2026-08-13
+
+Repository initialised at `~/Projects/github/shoki` on branch `main`, pushed to
+`github.com/tonyfarson/shoki` (public, MIT) over SSH. Root commit `fd7db32`, 10 files.
+
+An empty `Adw.ApplicationWindow` titled "Shoki" opens via `PYTHONPATH=src python -m shoki`,
+confirmed visually.
+
+Notes worth carrying forward:
+
+- The repo path is `~/Projects/github/shoki`, not `~/Projects/apps/shoki` as originally planned.
+- Claude's working files live in `.claude/` and are gitignored, along with `.obsidian/`,
+  `_to_delete/`, and Python bytecode. The staged file list was verified before committing.
+- `Adw.ApplicationWindow` has no titlebar of its own; the header bar lives inside the content tree
+  via `Adw.ToolbarView`. An empty window with no `Adw.HeaderBar` would have looked broken.
+- Two startup warnings are environmental, not bugs. See the Phase 0 section above.
 
 ---
 
