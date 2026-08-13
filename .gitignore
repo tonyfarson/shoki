@@ -1,0 +1,46 @@
+# ---- Claude / AI assistant working files (never published) ----
+.claude/
+
+# ---- Desktop environment cruft ----
+.directory
+.DS_Store
+
+# ---- Obsidian vault config (themes, workspace state — not project files) ----
+.obsidian/
+
+# ---- Staging area for files Claude cannot delete over the device bridge ----
+_to_delete/
+
+# ---- Python ----
+__pycache__/
+*.py[codz]
+*$py.class
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ---- Flatpak build artifacts ----
+# .flatpak-builder is flatpak-builder's default --state-dir
+# (downloads, build dirs, build cache)
+.flatpak-builder/
+builddir/
+repo/
+*.flatpak
+
+# ---- Editors ----
+.vscode/
+.idea/
+*.swp
+*~
