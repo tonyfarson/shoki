@@ -149,6 +149,36 @@ A second Dolphin action that loads the file into the app rather than transcribin
 
 ## Rejected
 
+### 2026-08-13 — Replatform to Qt6 for native KDE Plasma appearance
+
+Rewrite Shoki on PySide6/PyQt6 so it adopts the Plasma colour scheme, Breeze widget styling, and
+server-side window decorations.
+
+> **Considered and not taken.** Raised after observing Shoki side by side with Konsole: libadwaita
+> reads the desktop's *preferences* — accent colour, fonts, cursor and icon themes, dark/light,
+> `gtk-decoration-layout`, animations, text scaling — but never its *palette*. Background, header bar,
+> card colours and corner radii come from Adwaita and cannot be sourced from Breeze. The accent colour
+> visibly tracked a Plasma colour-scheme change during testing; nothing else did.
+>
+> **It is a rewrite, not a port.** Surviving: the shape of `transcribe.py` — parameter dict,
+> multipart, parse the JSON — plus everything learned about the server. Discarded: all window code,
+> libsoup, the GSettings schema, `Adw.ToastOverlay`, `Adw.PreferencesGroup`, `Gtk.FileDialog`, and the
+> packaging and Flatpak work.
+>
+> **It moves the problem rather than removing it.** Qt on GNOME looks as foreign as GTK does on
+> Plasma, and in practice worse: Plasma ships GTK integration by default, while GNOME users rarely
+> install the Qt platform theme that would return the favour. No Linux toolkit is native everywhere.
+>
+> **The cheaper answer to the same complaint** is a user-side `~/.config/gtk-4.0/gtk.css` re-declaring
+> libadwaita's documented colour variables (`--window-bg-color`, `--headerbar-bg-color`,
+> `--view-bg-color`, `--card-bg-color`, …) to match the desktop's scheme. libadwaita's docs state that
+> applications may override these by re-declaring them. Applied at the user level it fixes every GTK4
+> application on the machine at once. It belongs to the desktop, not to Shoki — **Shoki must never
+> ship such a stylesheet**, or it would impose Breeze colours on GNOME users too.
+>
+> Do not reopen this without a new argument. The stack was chosen deliberately in Phase 0.5 after
+> considering Rust and Qt6, and one stated reason for the project was building a GTK4 application.
+
 ### 2026-08-13 — Translate to a chosen target language
 
 > **Not possible.** Whisper's translate task is source-to-English only; the model has no
@@ -193,3 +223,64 @@ A second Dolphin action that loads the file into the app rather than transcribin
 > labels, full keyboard navigation, and respecting the system's contrast and text-size settings — all
 > v0 requirements in Phase 2. A pane of accessibility toggles is usually evidence it was bolted on
 > afterwards.
+
+### 2026-08-13 — Merging short subtitle cues client-side
+
+> **Deferred.** Observed on a 34-minute sermon: SRT output has ~2,100 cues, many of them a single
+> word, because each Whisper segment becomes one cue and the decoder degrades badly late in a long
+> file. Cue 1 also spans 27 seconds for one sentence. The server offers no way to merge cues —
+> `max_len` caps length and `split_on_word` only refines where a capped segment breaks; neither joins
+> anything. A client-side pass over the parsed cues could merge adjacent short ones under a target
+> duration and character count. Real work: it means parsing SRT and VTT rather than passing them
+> through, which is a structural change to how Shoki treats those formats. Not v0.1.0.
+
+### 2026-08-13 — Advanced decoding parameters drawer
+
+> **Deferred, already fenced out of Phase 2.** The one-word-per-segment collapse in the back half of
+> a long file is characteristic of decoder failure, and `beam_size` / `best_of` / `entropy_thold` /
+> `logprob_thold` are exactly the knobs that address it — all of them request fields the server
+> already reads. Worth revisiting once there is somewhere sensible to put roughly twenty numeric
+> inputs without turning the main window into the early-2000s dialog this project exists to avoid.
+
+### 2026-08-13 — Inferring paragraph breaks from segment timings
+
+> **Deferred.** Whisper's `text` output carries no paragraph information, so `_reflow()` produces one
+> continuous paragraph regardless of length — a 6,000-word transcript is one block. `verbose_json`
+> returns per-segment timings, so a gap over roughly two seconds is a plausible paragraph boundary.
+> That would mean requesting `verbose_json` internally and rendering `text` from it, which changes
+> what "output format" means. Worth doing, not in v0.1.0.
+
+### 2026-08-14 — Per-run subfolder for batch output
+
+> **Deferred, and cheap when it comes up.** Idea: a batch drops its transcripts into a dated subfolder
+> of the destination — `Transcriptions/batch_20260814/` — rather than mixing twelve files in with
+> everything else. Roughly twenty lines: resolve the subfolder in `_save_text()` when a run is a
+> batch, and `os.makedirs` it once. Three things to settle first, none of them hard:
+>
+> - It wants a GSettings toggle. Flat output is the right answer for someone whose destination is
+>   already a per-project folder, and one shipped behaviour will annoy one of the two camps.
+> - A date alone collides on the second batch of the same day. Either add the time
+>   (`batch_20260814-1704`) or reuse the existing hyphen-suffix rule at the directory level.
+> - The Dolphin service menu writes flat and has no notion of a run, so the two would diverge in the
+>   shared destination directory. That is probably fine — a batch is a Shoki-only concept — but it
+>   should be a decision rather than an accident.
+
+### 2026-08-14 — Event log in Preferences
+
+> **Deferred.** Raised while looking at a truncated toast: a toast is a glance, and some messages are
+> longer than a glance. A scrollable log of what Shoki did and what came back — full error text,
+> which files a batch wrote, endpoint failures — would give errors somewhere to live at full length,
+> and would make a failed batch reviewable after the toast has gone. It also answers "what did it
+> actually send?", which came up repeatedly during Phase 2 debugging.
+>
+> Design notes for whoever picks this up: it is a log of *events*, not a debug console, so no
+> stack traces. It needs a cap, or it becomes a memory leak. And Preferences may be the wrong home —
+> Preferences is for settings, and a log is not a setting.
+>
+> **The "pull in server logs too" half is out of scope and should stay out.** Shoki treats the
+> whisper.cpp endpoint as an external HTTP service; the server belongs to the Otachi project. Worse,
+> there is no route that returns logs — the server's output goes to its own stdout, which for Tony
+> means `docker logs whisper-cpp` on a container Shoki knows nothing about and has no business
+> reaching into. Shipping that would mean either a Docker dependency or an SSH one, and would break
+> for every user whose server is not a local container. Shoki can log its own side of every
+> exchange, including the server's HTTP responses, which is most of the value.

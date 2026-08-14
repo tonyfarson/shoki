@@ -118,10 +118,24 @@ Behaviour that constrains design:
   warns it loads arbitrary server-side paths.
 - The inference endpoint is blocking. No SSE, chunked encoding, or websockets. Progress percentages
   and live partial transcripts are impossible without patching the server.
-- Cancellation is an *exposure* limit, not a capability limit. `whisper_full_params` carries
-  `abort_callback` and `encoder_begin_callback`, and `whisper.h` states of the latter: "If it returns
-  false, the computation is aborted." The server example never wires either to anything
-  client-facing, and there is no cancel route. A client can stop waiting; it cannot stop the server.
+- **Cancellation works, and the client does stop the server.** Corrected 2026-08-14 — this entry
+  previously said the server example "never wires either to anything client-facing" and that a client
+  "cannot stop the server." Both halves were wrong. `examples/server/server.cpp` wires the abort to
+  the HTTP connection state:
+
+  ```cpp
+  wparams.abort_callback = [](void *user_data) {
+      auto req_ptr = static_cast<const httplib::Request*>(user_data);
+      return req_ptr->is_connection_closed();
+  };
+  wparams.abort_callback_user_data = (void*)&req;
+  ```
+
+  Closing the connection therefore aborts the inference, and the server logs `client disconnected,
+  aborted processing`. Confirmed on Otachi 2026-08-14 against
+  `ghcr.io/ggml-org/whisper.cpp:main-vulkan`: GPU utilisation dropped the instant Cancel was clicked,
+  and that line appeared in the container log. No cancel *route* exists, and none is needed — closing
+  the socket is the mechanism.
 
 ---
 
@@ -238,9 +252,10 @@ Control placement:
 Settings holds defaults; the main window overrides them for the current session. The three subtitle
 controls only affect `srt` and `vtt` output.
 
-> **Open:** where the initial prompt sits in the vertical order. It was suggested it should come
-> first, but the jargon worth priming it with is usually not known until the file is chosen. Resolve
-> during Phase 2 layout.
+> **Resolved 2026-08-13:** the initial prompt sits below the options and directly above Transcribe.
+> Order is Source → Destination → Output format and Translate → Initial prompt → Transcribe →
+> Transcript. It is the last thing touched before starting a job, which matches how it is used: the
+> jargon worth priming with is not known until the file has been chosen.
 
 ---
 
@@ -323,68 +338,150 @@ else.
 
 Deliverables:
 
-- Asynchronous requests — transcription runs on the GLib main context and the UI stays responsive.
-  Already true as of Phase 1; this line now means keeping it true as features are added. Renamed
-  from "Threading" on 2026-08-13, because libsoup is async-native and GNOME's own guidance is to
-  reach for threads last rather than first.
-- Output format picker — `text` (default), `srt`, `vtt`, `json`, `verbose_json`
-- Translate to English — a checkbox
-- Initial prompt field — a large accuracy win for proper nouns and jargon
-- Subtitle tuning in settings — `no_timestamps`, `split_on_word`, `max_len`
-- Batch a directory — client-side loop, one POST per file, sequential. No server support required.
-- Save output to a chosen directory; copy to clipboard
-- Drag and drop onto the window (`Gtk.DropTarget`)
-- Settings via `Adw.PreferencesDialog`, persisted with `GSettings`
-- Error handling — clear user-facing messages for unreachable server, non-2xx responses, unreadable
-  files. No stack traces in the UI.
-- Keyboard shortcuts and full keyboard navigation
-- Accessible roles and labels on every interactive widget
+- [x] Asynchronous requests — transcription runs on the GLib main context and the UI stays
+      responsive. Already true as of Phase 1; this line now means keeping it true as features are
+      added. Renamed from "Threading" on 2026-08-13, because libsoup is async-native and GNOME's own
+      guidance is to reach for threads last rather than first. (2026-08-13)
+- [x] Output format picker — `text` (default), `srt`, `vtt`, `json`, `verbose_json` (2026-08-13)
+- [x] Translate to English — a checkbox (2026-08-13)
+- [x] Initial prompt field — a large accuracy win for proper nouns and jargon (2026-08-13)
+- [x] Subtitle tuning in settings — `no_timestamps`, `split_on_word`, `max_len` (2026-08-13).
+      `max_len`'s effect on cue length is wired and sent but not yet observed against the server.
+- [x] Batch a directory — client-side loop, one POST per file, sequential. No server support
+      required. A batch saves each transcript to the destination as it completes and shows a
+      running log; holding results until the end would mean each overwriting the last in the
+      view. (2026-08-14)
+- [x] Save output to a chosen directory; copy to clipboard (2026-08-13)
+- [x] Drag and drop onto the window (`Gtk.DropTarget`) — accepts a folder, one file, or several
+      files at once. Several files is a source kind neither dialog can produce: an ad-hoc batch
+      drawn from different folders. Non-media items are filtered out and reported rather than
+      silently dropped. (2026-08-14)
+- [x] Settings via `Adw.PreferencesDialog`, persisted with `GSettings` (2026-08-13)
+- [x] Error handling — clear user-facing messages for unreachable server, non-2xx responses,
+      unreadable files. No stack traces in the UI. Verified 2026-08-14 by deliberately breaking
+      each path; nothing reached the console. (2026-08-14)
+
+      Three defects this found. `str(OSError)` was reaching toasts as
+      `[Errno 13] Permission denied: '/path/x.mp3'` — an errno and a repr'd path. Non-2xx replies
+      discarded the server's own explanation, which a 404 puts in the body. And an unreachable
+      endpoint was reported only by a quiet status label while the spinner and timer ran, so a
+      doomed job looked like a working one — endpoints are now validated *before* a run starts.
+
+      `Soup.Message.new()` accepts far more than it can reach: `nonsense` yields a valid message
+      whose request never completes, and `localhost:8080` parses as scheme `localhost` with path
+      `8080`. Neither can be caught after the fact, which is why the guard is ours and runs first.
+      Corollary for the interface: a failure to START is an event and gets a toast; liveness is a
+      status that can flip back, and gets a label.
+- [x] Keyboard shortcuts and full keyboard navigation (2026-08-14). Every shortcut drives a
+      `Gio.SimpleAction` rather than poking a widget, so each carries an enabled state — Escape does
+      nothing when idle, Ctrl+S nothing with an empty transcript, and the menu greys to match for
+      free. The shortcuts dialog is generated from the same list that registers the accelerators, so
+      the two cannot drift. Uses `Adw.ShortcutsDialog` (libadwaita 1.8+): `Gtk.ShortcutsWindow` is
+      deprecated since GTK 4.18 and is removed in GTK 5.
+- [x] Accessible roles and labels on every interactive widget (2026-08-14). The status row is a
+      `STATUS` live region so the file counter and liveness are announced rather than having to be
+      hunted for; the progress bar, the menu button, the transcript view, and the Copy, Save and
+      Choose buttons all carry labels or descriptions beyond their visible text. Keyboard
+      reachability confirmed by tabbing the whole window, including Copy and Save, which sit in a
+      group header suffix rather than the normal content flow.
+
+      The drop target is now discoverable — the Source row reads "Choose an audio or video file, a
+      folder, or drop them anywhere on this window". Noted 2026-08-14 when drag and drop turned out
+      to work and be completely invisible. An affordance only the author knows about is not a
+      feature.
+
+      > **Not audited, only implemented.** No screen reader has been run against Shoki and no
+      > contrast check has been done. Roles and labels being present is not the same as the result
+      > being usable with assistive technology. A real pass belongs in Phase 4 alongside the icon
+      > and screenshots.
 
 Progress and liveness — three honest indicators, no invented percentages:
 
-- Spinner plus an **elapsed-time counter**. A real number beats a bar creeping toward a fabricated
-  100%.
-- **Batch counter** — "file 3 of 12" is measurable and true. The progress bar exists; it measures
-  files, not audio.
-- **Upload percentage** — deferred 2026-08-13 at the author's call, as pointless against a server on
-  localhost. The capability is retained rather than lost: `SoupMessage::wrote-body-data` reports
-  bytes written, so this stays an addition rather than becoming a rewrite. It returns if Shoki is
-  ever used from a second machine over the tailnet. See `FUTURE.md`.
-- **Liveness via `GET /health`**, polled on a second connection during a job. Confirmed viable by the
-  Phase 1 test. It distinguishes "server alive and reachable" from "server dead, wedged, or
-  unreachable". It cannot see a stalled inference on a healthy server, so the interface must not
-  claim to show that.
+- [x] Spinner plus an **elapsed-time counter**. A real number beats a bar creeping toward a
+      fabricated 100%. The counter restarts per file in a batch — a running total across twelve
+      files answers a question nobody asked. (2026-08-14)
+- [x] **Batch counter** — "file 3 of 12" is measurable and true. The progress bar exists; it
+      measures files, not audio. (2026-08-14)
+- [x] **Liveness via `GET /health`**, polled on a second connection during a job (2026-08-14).
+      `/health` sits at the server root and does NOT move with `--inference-path`, so the URL is
+      derived by keeping the endpoint's origin and replacing the path. Confirmed viable
+      by the Phase 1 test. It distinguishes "server alive and reachable" from "server dead, wedged,
+      or unreachable". It cannot see a stalled inference on a healthy server, so the interface must
+      not claim to show that.
+
+> **Deferred 2026-08-13, at the author's call: upload percentage.** Pointless against a server on
+> localhost. The capability is retained rather than lost — `SoupMessage::wrote-body-data` reports
+> bytes written, so this stays an addition rather than becoming a rewrite. It returns if Shoki is
+> ever used from a second machine over the tailnet. See `FUTURE.md`.
 
 Cancel:
 
-- Cancelling a single file stops Shoki waiting. It does **not** stop the server, which continues to
-  completion and discards the result. Say so in the UI rather than implying otherwise.
-- Cancelling a batch is genuinely effective — remaining files are never sent.
+- [x] Cancelling a single file closes the connection, which aborts the inference server-side.
+      Verified 2026-08-14 — see Verified Server Behaviour. The UI may say the server stops, because
+      it does. (2026-08-14)
+- [x] Cancelling a batch is genuinely effective — remaining files are never sent. Verified
+      2026-08-14: cancelling during file 2 of 3 logged file 2 as cancelled and produced no log line
+      at all for file 3, because no request was ever made for it. (2026-08-14)
 
 Output destination and filenames:
 
-- One shared destination directory by default for both Shoki and the Dolphin service menu. All
-  transcripts land in one place; the user decides what happens next. Both are customisable.
-- The shipped default resolves the XDG Documents directory plus a `Transcriptions` subfolder at
-  runtime. `~/Nextcloud/Documents/Transcriptions/` is a personal setting, not a shipped default.
-- **Collision rule: append a numeric suffix** — `interview.txt`, then `interview_1.txt`. Never
-  overwrite silently.
+- [x] One shared destination directory by default for both Shoki and the Dolphin service menu. All
+      transcripts land in one place; the user decides what happens next. Both are customisable.
+      (2026-08-13)
+- [x] The shipped default resolves the XDG Documents directory plus a `Transcriptions` subfolder at
+      runtime. `~/Nextcloud/Documents/Transcriptions/` is a personal setting, not a shipped default.
+      (2026-08-13)
+- [x] **Collision rule: append a numeric suffix after a hyphen** — `interview.txt`, then
+      `interview-1.txt`. Never overwrite silently. Implemented with `O_CREAT|O_EXCL` rather than an
+      existence check, so a second window or the Dolphin service menu cannot win a race for the
+      name. (2026-08-13)
 
-> **Open, found 2026-08-13:** the existing Dolphin helper script appends a *hyphen* — `foo-1.txt` —
-> while this roadmap specifies an *underscore*. From Phase 3 onward both write into the same
-> destination directory. Pick one convention before that happens, rather than shipping a folder that
-> uses two.
-- Under Flatpak the destination is chosen once through the folder-chooser portal and the result
-  stored, rather than declared as a static filesystem permission. See Phase 3.
+> **Resolved 2026-08-13: the hyphen wins.** Transcripts already on disk use it, so the folder stays
+> consistent with its own history and nothing already saved looks out of place. The Dolphin helper
+> script is rewritten and shipped fresh in Phase 3 anyway, so matching it costs nothing.
 
-> **Open, found 2026-08-13:** Whisper returns each segment prefixed with a space and the server joins
-> them with newlines, so a transcript renders as one indented line per sentence. `.strip()` only
-> cleans the ends of the whole string. Decide this alongside the output format picker — one line per
-> sentence is useful for `srt` and `vtt` and unhelpful for prose. Whatever is chosen, the saved
-> `text` output and the on-screen view should agree.
+> **Note:** under Flatpak the destination is chosen once through the folder-chooser portal and the
+> result stored, rather than declared as a static filesystem permission. That work belongs to
+> Phase 3, not here.
+
+> **Resolved 2026-08-13: reflow `text`, pass everything else through untouched.** The leading space
+> turned out to be an instruction rather than noise. Whisper's tokenizer marks a word-initial token
+> with a leading space, so a segment beginning *without* one continues the previous word — the
+> newline landed mid-word. Stripping every line and joining on spaces produced `kings hip`,
+> `eight-year- olds` and `our way ,`. The rule now: a line starting with whitespace is appended after
+> a single space, one that is not is appended flush. `json` is NOT reflowed, deviating from the first
+> answer given — it is now a user-selectable output format, so reflowing it would corrupt the
+> document and make the menu entry redundant with `text`. Saved output and the on-screen view are
+> identical in every format.
 
 Language auto-detect is always on and has no control. A manual language override is deferred to the
 advanced drawer — see `FUTURE.md`.
+
+Build order, agreed 2026-08-13: **schema first, then UI.** Key names are the expensive-to-reverse
+thing, per Phase 1's lesson, and Settings holds the defaults the main window overrides — so building
+controls before those defaults exist means reworking them.
+
+The deliverable lists above are the checklist — there is no second copy to drift out of step with
+them. Work order so far: schema, then the response layer, then main-window controls, then the
+preferences dialog, then destination and save and copy.
+
+Settled during Phase 2:
+
+- **Booleans are `"true"` / `"false"` on the wire.** `parse_str_to_bool()` in `server.cpp` accepts
+  `true`, `1`, `yes` and `y`. This was the last unverified item carried out of Phase 1.
+- **Omitting a form field sends the *server's* default, not Shoki's.** Every field is read under
+  `if (req.has_file(name))`. `language` and `response_format` are therefore sent unconditionally on
+  every request; the server would otherwise fall back to `en` and `json`.
+- **Branch on the format requested, never on the reply's Content-Type.** The `text` branch labels
+  itself `text/html; charset=utf-8`, which is neither true nor safe to act on.
+- **Responses are decoded with replacement, not strictly.** Whisper's tokenizer works on bytes, so a
+  token boundary can land mid-character and the server ships a truncated UTF-8 sequence. Observed on
+  mixed English/Japanese audio. No client can repair it; failing the whole transcript over one bad
+  byte would discard everything else.
+- **`Gdk.Clipboard` has no `set_text` in PyGObject** — the C function is not exposed through
+  introspection. Copy goes through `Gdk.ContentProvider.new_for_bytes()` and `set_content()`.
+- **`do_startup` is now overridden**, chaining up on its first line as the libadwaita docs require.
+  Phase 1 deliberately left it alone; it now registers the Preferences action and its accelerator.
 
 Stopping condition: Shoki is used for a real transcription task and feels finished rather than
 prototype-ish. Tag `v0.1.0`.
@@ -392,7 +489,8 @@ prototype-ish. Tag `v0.1.0`.
 Explicitly not in Phase 2: packaging, model switching, system monitoring, the advanced-parameters
 drawer, batch queue UI, alternative backends.
 
-Status: ⏳ Not started
+Status: 🚧 Feature-complete — all 20 deliverables ticked 2026-08-14. Not yet tagged `v0.1.0`:
+the stopping condition is real daily use, not a full checklist.
 
 ---
 
@@ -410,18 +508,18 @@ files handed to it by the file manager, and therefore never needs broad filesyst
 
 Native packages — pacman first, then `.deb` and `.rpm`:
 
-- Ship the application, the helper script, and the `.desktop` service menu
-- Install the GSettings schema system-wide, so the script can read Shoki's settings directly with
-  `gsettings get com.farsononline.shoki endpoint-url`. One settings dialog governs both, and they
-  cannot drift.
+- [ ] Ship the application, the helper script, and the `.desktop` service menu
+- [ ] Install the GSettings schema system-wide, so the script can read Shoki's settings directly with
+      `gsettings get com.farsononline.shoki endpoint-url`. One settings dialog governs both, and they
+      cannot drift.
 
 Flatpak:
 
-- Ships the GUI. No broad filesystem permission required.
-- An "Install Dolphin integration" button copies **bundled** files into
-  `~/.local/share/kio/servicemenus/` and marks the `.desktop` executable.
-- The schema lives inside the sandbox and is invisible to a host script, so the script falls back to
-  its own built-in defaults. Graceful degradation, not a separate code branch.
+- [ ] Ships the GUI. No broad filesystem permission required.
+- [ ] An "Install Dolphin integration" button copies **bundled** files into
+      `~/.local/share/kio/servicemenus/` and marks the `.desktop` executable.
+- [ ] The schema lives inside the sandbox and is invisible to a host script, so the script falls back
+      to its own built-in defaults. Graceful degradation, not a separate code branch.
 
 Rules that apply to both:
 
@@ -464,15 +562,16 @@ Goal: the project is presentable to strangers. Nothing is published yet.
 
 Deliverables:
 
-- Custom icon — proper SVG following the relevant icon guidelines
-- Appstream metainfo `com.farsononline.shoki.metainfo.xml`, validating cleanly with
-  `appstreamcli validate`
-- Screenshots — 2–3, consistent window size, meaningful content, no personal data
-- README a stranger can follow: prerequisites, the server requirement, install steps, troubleshooting
-- LICENSE finalised — copyright holder confirmed 2026-08-13 as Tony Farson, personally rather than an
-  entity
-- `CONTRIBUTING.md`, if PRs are wanted
-- Repo hygiene — issue and PR templates, `.editorconfig`
+- [ ] Custom icon — proper SVG following the relevant icon guidelines
+- [ ] Appstream metainfo `com.farsononline.shoki.metainfo.xml`, validating cleanly with
+      `appstreamcli validate`
+- [ ] Screenshots — 2–3, consistent window size, meaningful content, no personal data
+- [ ] README a stranger can follow: prerequisites, the server requirement including `--convert`,
+      install steps, troubleshooting
+- [ ] LICENSE finalised — copyright holder confirmed 2026-08-13 as Tony Farson, personally rather
+      than an entity
+- [ ] `CONTRIBUTING.md`, if PRs are wanted
+- [ ] Repo hygiene — issue and PR templates, `.editorconfig`
 
 Stopping condition: a stranger could clone the repo, follow the README, install it, and run it.
 
@@ -542,8 +641,11 @@ Corrections made to prior documentation:
 - `response_format` accepts five values, now confirmed in source rather than assumed.
 - whisper.cpp serves static files from `--public` but ships no UI. The mount point exists; the
   content does not. It is a bring-your-own-UI hook.
-- Cancellation was described as impossible. It is unexposed, not impossible — the library has
-  `abort_callback`; the server never wires it up.
+- Cancellation was described as impossible. That was wrong twice over, and both corrections came
+  from Tony refusing to accept the claim. Phase 0.5 established the library exposes `abort_callback`
+  and downgraded "impossible" to "unexposed". Phase 2 then found the server example *does* wire it,
+  to `httplib::Request::is_connection_closed()` — so cancellation is neither impossible nor
+  unexposed, and closing the connection genuinely stops the inference.
 - Flatpak was recorded as a decision in earlier documents. It was a preference. Decoupling the
   Dolphin integration removed the conflict entirely, and both formats now ship.
 

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="com.farsononline.shoki" path="/com/farsononline/shoki/">
+
     <key name="endpoint-url" type="s">
       <default>'http://127.0.0.1:8080/inference'</default>
       <summary>Transcription endpoint URL</summary>
@@ -10,5 +11,78 @@
         started with --inference-path serve a different route instead.
       </description>
     </key>
+
+    <key name="response-format" type="s">
+      <choices>
+        <choice value="text"/>
+        <choice value="srt"/>
+        <choice value="vtt"/>
+        <choice value="json"/>
+        <choice value="verbose_json"/>
+      </choices>
+      <default>'text'</default>
+      <summary>Default output format</summary>
+      <description>
+        Which format new transcriptions start in. The main window overrides this
+        for the current session without changing the default. These five strings
+        are the literals the server branches on; anything else falls through to
+        json.
+      </description>
+    </key>
+
+    <key name="destination-directory" type="s">
+      <default>''</default>
+      <summary>Where saved transcripts are written</summary>
+      <description>
+        Absolute path of the directory transcripts are saved into. Empty means
+        unset, in which case Shoki resolves the XDG Documents directory plus a
+        Transcriptions subfolder at runtime. Empty rather than a baked-in path so
+        the setting travels between machines with different home layouts.
+      </description>
+    </key>
+
+    <key name="no-timestamps" type="b">
+      <default>false</default>
+      <summary>Omit timestamps from subtitle output</summary>
+      <description>
+        Only affects the srt and vtt formats. Sent to the server as the
+        no_timestamps form field.
+      </description>
+    </key>
+
+    <key name="split-on-word" type="b">
+      <default>false</default>
+      <summary>Split subtitle lines on word boundaries</summary>
+      <description>
+        Only meaningful when max-len is greater than zero: it decides whether a
+        length-limited segment breaks at a word or mid-token. Sent to the server
+        as the split_on_word form field.
+      </description>
+    </key>
+
+    <key name="max-len" type="i">
+      <range min="0" max="1000"/>
+      <default>0</default>
+      <summary>Maximum subtitle segment length in characters</summary>
+      <description>
+        Zero means no limit, which is the server's own default. Only affects the
+        srt and vtt formats. Sent to the server as the max_len form field.
+      </description>
+    </key>
+
+    <key name="color-scheme" type="s">
+      <choices>
+        <choice value="default"/>
+        <choice value="light"/>
+        <choice value="dark"/>
+      </choices>
+      <default>'default'</default>
+      <summary>Interface look and feel</summary>
+      <description>
+        Whether Shoki follows the system light/dark preference or forces one.
+        Applied through AdwStyleManager.
+      </description>
+    </key>
+
   </schema>
 </schemalist>
