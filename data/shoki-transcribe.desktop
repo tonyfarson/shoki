@@ -1,0 +1,20 @@
+# Dolphin service menu for Shoki.
+#
+# Installed to /usr/share/kio/servicemenus/ by the native package. That location
+# is system data and therefore already authorised, so no executable bit is
+# needed on this file — unlike a user-installed copy under ~/.local/share/.
+#
+# Exec uses the bare command name rather than an absolute path, so the same file
+# works wherever shoki-transcribe lands on PATH.
+
+[Desktop Entry]
+Type=Service
+Name=Send to Whisper
+MimeType=audio/*;video/*;
+Actions=transcribe
+X-KDE-Priority=TopLevel
+
+[Desktop Action transcribe]
+Name=Send to Whisper
+Icon=com.farsononline.shoki
+Exec=shoki-transcribe %U

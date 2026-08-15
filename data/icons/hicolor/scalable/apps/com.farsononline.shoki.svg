@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Shoki</title>
+  <defs>
+    <!-- gradientUnits="userSpaceOnUse" so the pen slit below can sample this
+         same gradient at its own coordinates and match the tile behind the nib
+         exactly. With the default objectBoundingBox the gradient would be
+         rescaled across the slit's tiny box instead. -->
+    <linearGradient id="surface" gradientUnits="userSpaceOnUse"
+                    x1="10" y1="10" x2="118" y2="118">
+      <stop offset="0" stop-color="#303238"/>
+      <stop offset="1" stop-color="#181b20"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Inset from the canvas: GNOME's HIG says the artwork "shouldn't fill this
+       space". 108x108 centred in 128x128. -->
+  <rect x="10" y="10" width="108" height="108" rx="30" fill="url(#surface)"/>
+
+  <!-- Speech becoming written text. The left tail starts at y=61 rather than
+       y=63: at 2px it was half the thickness of the right tail and vanished
+       below 48px. Both tails are now 4px. -->
+  <path fill="#ffffff" d="M20 61 H38 L43 61 L46 65 L49 58 L52 70 L55 55 L58 74
+       L61 52 L64 79 L67 52 L70 74 L73 55 L76 70 L79 58 L82 65 L85 61 L108 61
+       V65 H85 L81 68 L78 65 L75 73 L72 62 L69 78 L66 88 L62 78 L59 62 L56 73
+       L53 65 L50 70 L47 64 L44 68 L39 65 H20 Z"/>
+
+  <!-- Nib, drawn after the waveform so it sits over it. -->
+  <path fill="#ffffff" d="M64 37 C60 44 57 51 57 59 C57 70 60 82 64 91
+       C68 82 71 70 71 59 C71 51 68 44 64 37 Z"/>
+
+  <!-- Slit: filled with the tile gradient rather than a fixed grey. -->
+  <path fill="url(#surface)" d="M63 59 L64 53 L65 59 L64 72 Z"/>
+
+  <!-- Nib base -->
+  <path fill="#ffffff" d="M60 91 H68 L67 96 H61 Z"/>
+</svg>

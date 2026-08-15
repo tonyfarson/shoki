@@ -1,0 +1,63 @@
+# Maintainer: Tony Farson
+
+# Lives in build-aux/ rather than the repo root deliberately: makepkg creates
+# src/ and pkg/ beside the PKGBUILD, and at the root that src/ would collide
+# with Shoki's own source directory.
+#
+# This builds the WORKING TREE, via "$startdir/..", which is what Phase 3 needs:
+# there is no v0.1.0 tag yet, and the tag waits on real daily use rather than on
+# a checklist. For a public release this becomes a normal
+# source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz") with a
+# checksum, at which point $startdir goes away. Until then it is a local package,
+# not an AUR-ready one.
+
+pkgname=shoki
+pkgver=0.1.0
+pkgrel=3
+pkgdesc='GTK4 control surface for a whisper.cpp transcription server, with a Dolphin service menu'
+arch=('any')
+url='https://github.com/tonyfarson/shoki'
+license=('MIT')
+
+# python-gobject, gtk4, libadwaita and libsoup3 are the running application.
+# glib2 supplies gsettings, curl does the POST and libnotify supplies
+# notify-send -- those three are what the standalone helper script needs, and it
+# must keep working whether or not anyone ever opens the GUI.
+depends=(
+  'python'
+  'python-gobject'
+  'gtk4'
+  'libadwaita'
+  'libsoup3'
+  'glib2'
+  'curl'
+  'libnotify'
+  'hicolor-icon-theme'
+)
+
+optdepends=(
+  'xdg-user-dirs: resolve the XDG Documents directory for the default transcript destination'
+)
+
+makedepends=('meson')
+
+build() {
+    # No source=() array means makepkg never wipes $srcdir, so a second build
+    # would meet an already-configured meson directory and refuse. Clean it
+    # here rather than requiring makepkg -C every time.
+    rm -rf build
+
+    meson setup --prefix=/usr --buildtype=plain "$startdir/.." build
+    meson compile -C build
+}
+
+check() {
+    meson test -C build --print-errorlogs
+}
+
+package() {
+    meson install -C build --destdir "$pkgdir"
+
+    # MIT is not in /usr/share/licenses/common, so the text ships with the package.
+    install -Dm644 "$startdir/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

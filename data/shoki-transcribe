@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+#
+# shoki-transcribe — send files to a whisper.cpp server and save the transcripts.
+#
+# This is the Dolphin service menu's helper. It is DELIBERATELY STANDALONE: it
+# never launches Shoki, imports nothing from it, and knows nothing about any
+# file manager. Anything that can hand it file paths or file:// URLs can use it.
+#
+# Configuration comes from Shoki's GSettings, so one Preferences dialog governs
+# both the application and the right-click, and the two cannot drift. Every
+# setting is read through read_setting() — a single choke point, so that adding a
+# second source later (a config file, for the Flatpak case where the schema lives
+# inside the sandbox and is invisible here) is one function rather than a rewrite.
+#
+# Usage: shoki-transcribe FILE_OR_URL [FILE_OR_URL...]
+
+set -uo pipefail
+
+readonly SCHEMA="com.farsononline.shoki"
+readonly APP_NAME="Shoki"
+
+# Fallbacks used when no setting is readable. These match the schema's own
+# defaults; they are not a second opinion about what the defaults should be.
+readonly FALLBACK_ENDPOINT="http://127.0.0.1:8080/inference"
+readonly FALLBACK_FORMAT="text"
+
+# ---------------------------------------------------------------------------
+# User feedback. A right-click that silently does nothing is the worst possible
+# failure mode, so every path through this script ends in a notification.
+# notify-send rather than kdialog: nothing here is KDE-specific, and it stays
+# that way.
+# ---------------------------------------------------------------------------
+notify() {
+    local urgency=$1 summary=$2 body=${3:-}
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send --app-name="$APP_NAME" --urgency="$urgency" \
+                    --icon=com.farsononline.shoki "$summary" "$body"
+    else
+        printf '%s: %s %s\n' "$APP_NAME" "$summary" "$body" >&2
+    fi
+}
+
+die() {
+    notify critical "Transcription failed" "$1"
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# The single settings choke point.
+# ---------------------------------------------------------------------------
+read_setting() {
+    local key=$1 fallback=$2 value
+
+    if command -v gsettings >/dev/null 2>&1; then
+        value=$(gsettings get "$SCHEMA" "$key" 2>/dev/null) || value=""
+        # gsettings prints strings quoted: 'text'. Booleans and ints are bare.
+        if [[ $value == \'*\' ]]; then
+            value=${value#\'}
+            value=${value%\'}
+        fi
+        [[ -n $value ]] && { printf '%s' "$value"; return; }
+    fi
+
+    printf '%s' "$fallback"
+}
+
+# ---------------------------------------------------------------------------
+# file:///home/tony/My%20File.mp3  ->  /home/tony/My File.mp3
+# Plain paths are passed through untouched.
+# ---------------------------------------------------------------------------
+url_to_path() {
+    local u=$1
+    [[ $u == file://* ]] || { printf '%s' "$u"; return; }
+    u=${u#file://}
+    u=${u//\\/\\\\}          # protect literal backslashes before %b expansion
+    printf '%b' "${u//%/\\x}"
+}
+
+# ---------------------------------------------------------------------------
+# Must agree exactly with Shoki's default_destination(): the XDG Documents
+# directory, or $HOME when that is unset, plus a Transcriptions subfolder.
+# ---------------------------------------------------------------------------
+resolve_destination() {
+    local configured documents
+    configured=$(read_setting destination-directory "")
+    [[ -n $configured ]] && { printf '%s' "$configured"; return; }
+
+    documents=""
+    command -v xdg-user-dir >/dev/null 2>&1 && documents=$(xdg-user-dir DOCUMENTS 2>/dev/null)
+    [[ -n $documents ]] || documents=$HOME
+    printf '%s/Transcriptions' "$documents"
+}
+
+suffix_for_format() {
+    case $1 in
+        srt)  printf '.srt' ;;
+        vtt)  printf '.vtt' ;;
+        json|verbose_json) printf '.json' ;;
+        *)    printf '.txt' ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Post-processing, kept deliberately identical to transcribe.py's response
+# handling. If these two ever disagree, the same audio saved through the app and
+# through a right-click produces different files -- which reads as Shoki being
+# broken rather than Shoki being different.
+#
+#   text            reflowed into paragraphs (see reflow_text)
+#   srt, vtt        leading and trailing newlines stripped; internal whitespace
+#                   is structural and must not be touched
+#   json formats    passed through untouched
+#
+# >>> Mirrors _reflow() and the format branch in src/shoki/transcribe.py. <<<
+# ---------------------------------------------------------------------------
+
+# Whisper emits one segment per line. A leading space marks a word-initial
+# token, so a line that starts WITHOUT one continues the previous word: the
+# newline landed mid-word. Joining everything on spaces yields "eight-year- olds"
+# and "our way ,". So a line starting with whitespace is appended after a single
+# space, one that is not is appended flush, and blank lines become paragraph
+# breaks.
+reflow_text() {
+    awk '
+    {
+        line  = $0
+        piece = line
+        sub(/^[[:space:]]+/, "", piece)
+        sub(/[[:space:]]+$/, "", piece)
+
+        if (piece == "") {
+            if (current != "") { out = out (n++ ? "\n\n" : "") current; current = "" }
+            next
+        }
+
+        if (current == "")              current = piece
+        else if (line ~ /^[[:space:]]/) current = current " " piece
+        else                            current = current piece
+    }
+    END {
+        if (current != "") out = out (n++ ? "\n\n" : "") current
+        printf "%s", out
+    }'
+}
+
+strip_blank_edges() {
+    local s=$1
+    while [[ $s == $'\n'* ]]; do s=${s#$'\n'}; done
+    while [[ $s == *$'\n' ]]; do s=${s%$'\n'}; done
+    printf '%s' "$s"
+}
+
+normalise_body() {
+    case $1 in
+        text)     printf '%s' "$2" | reflow_text ;;
+        srt|vtt)  strip_blank_edges "$2" ;;
+        *)        printf '%s' "$2" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Never overwrite. foo.txt, then foo-1.txt, foo-2.txt — the hyphen rule Shoki
+# uses. noclobber makes the create O_EXCL, so Shoki and this script racing for
+# the same name in the shared destination cannot both win.
+# ---------------------------------------------------------------------------
+write_unique() {
+    local dir=$1 stem=$2 suffix=$3 content=$4
+    local candidate n=0
+
+    set -o noclobber
+    while :; do
+        if (( n == 0 )); then candidate="$dir/$stem$suffix"; else candidate="$dir/$stem-$n$suffix"; fi
+        # main.py writes `text if text.endswith("\n") else text + "\n"`.
+        # Strip any trailing newline and add exactly one, so both agree.
+        if { printf '%s\n' "${content%$'\n'}" > "$candidate"; } 2>/dev/null; then
+            set +o noclobber
+            printf '%s' "$candidate"
+            return 0
+        fi
+        (( n++ ))
+        (( n > 999 )) && { set +o noclobber; return 1; }
+    done
+}
+
+# ---------------------------------------------------------------------------
+
+(( $# > 0 )) || die "No files were given to transcribe."
+
+command -v curl >/dev/null 2>&1 || die "curl is not installed."
+
+endpoint=$(read_setting endpoint-url "$FALLBACK_ENDPOINT")
+format=$(read_setting response-format "$FALLBACK_FORMAT")
+destination=$(resolve_destination)
+no_timestamps=$(read_setting no-timestamps false)
+split_on_word=$(read_setting split-on-word false)
+max_len=$(read_setting max-len 0)
+suffix=$(suffix_for_format "$format")
+
+mkdir -p -- "$destination" 2>/dev/null \
+    || die "Could not create the destination folder: $destination"
+
+total=$#
+(( total == 1 )) \
+    && notify low "Transcribing…" "$(basename -- "$(url_to_path "$1")")" \
+    || notify low "Transcribing…" "$total files"
+
+succeeded=0
+failures=()
+
+for raw in "$@"; do
+    path=$(url_to_path "$raw")
+    name=$(basename -- "$path")
+
+    if [[ ! -r $path ]]; then
+        failures+=("$name: not readable")
+        continue
+    fi
+
+    # language=auto and response_format are sent on EVERY request. server.cpp
+    # reads each field under `if (req.has_file(name))`, so an omitted field is
+    # the SERVER's default (en, and json) rather than ours.
+    body=$(curl --silent --show-error \
+                --write-out '\n%{http_code}' \
+                --form "file=@${path}" \
+                --form "language=auto" \
+                --form "response_format=${format}" \
+                --form "no_timestamps=${no_timestamps}" \
+                --form "split_on_word=${split_on_word}" \
+                --form "max_len=${max_len}" \
+                -- "$endpoint" 2>&1)
+
+    status=${body##*$'\n'}
+    body=${body%$'\n'*}
+
+    if [[ $status != 2?? ]]; then
+        # A non-2xx reply usually explains itself in the body; a 404 certainly does.
+        failures+=("$name: server said ${status:-no response} ${body:0:120}")
+        continue
+    fi
+
+    transcript=$(normalise_body "$format" "$body")
+
+    written=$(write_unique "$destination" "${name%.*}" "$suffix" "$transcript") \
+        || { failures+=("$name: could not find a free filename"); continue; }
+
+    (( succeeded++ ))
+    last_written=$written
+done
+
+if (( ${#failures[@]} == 0 )); then
+    if (( succeeded == 1 )); then
+        notify normal "Transcript saved" "${last_written/#$HOME/\~}"
+    else
+        notify normal "$succeeded transcripts saved" "${destination/#$HOME/\~}"
+    fi
+    exit 0
+fi
+
+if (( succeeded > 0 )); then
+    notify critical "$succeeded of $total transcribed" "$(printf '%s\n' "${failures[@]}")"
+else
+    notify critical "Transcription failed" "$(printf '%s\n' "${failures[@]}")"
+fi
+exit 1

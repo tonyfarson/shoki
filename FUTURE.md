@@ -284,3 +284,54 @@ server-side window decorations.
 > reaching into. Shipping that would mean either a Docker dependency or an SSH one, and would break
 > for every user whose server is not a local container. Shoki can log its own side of every
 > exchange, including the server's HTTP responses, which is most of the value.
+
+### 2026-08-14 — File managers other than Dolphin
+
+> **Deferred, deliberately, at the start of Phase 3.** The roadmap left "which file managers beyond
+> Dolphin are targeted" open. The answer for now is Dolphin only, revisited after the Dolphin path
+> works end to end — at which point the question stops being speculative, because we will know how
+> much of the work is genuinely reusable.
+>
+> Why not now: Nautilus, Thunar and Nemo each use a different and mutually incompatible extension
+> mechanism. Nautilus in particular wants a Python extension via `nautilus-python`, not a `.desktop`
+> file, so it is a second implementation rather than a second copy. That is three separate costs,
+> each with its own packaging entry and its own maintenance burden, incurred for users who do not
+> exist yet. Every one of them must already be running their own whisper.cpp server.
+>
+> The thing that makes this cheap to defer: the helper script is standalone and knows nothing about
+> any file manager. Whatever a second file manager needs, it needs a way to *invoke that script* —
+> not a rewrite of it.
+
+### 2026-08-14 — "Open With" registration for audio and video
+
+> **Deferred at the end of Phase 3, deliberately.** Selecting Shoki from Dolphin's "Open With"
+> submenu makes the cursor bounce and nothing happens. That is not a bug; the feature was never
+> built. Three separate pieces are missing, and it was worth naming them rather than pretending it
+> was a one-line change:
+>
+> - `com.farsononline.shoki.desktop` has no `MimeType=` key, so Shoki is not registered as a handler
+>   for anything.
+> - Its `Exec=shoki` has no `%U` placeholder, so no file could be passed even if it were.
+> - `ShokiApplication.__init__` is `super().__init__(application_id=APP_ID)` with no flags, and there
+>   is no `do_open`. GIO's docs say the remaining arguments "are assumed to be a list of files" —
+>   with no `HANDLES_OPEN` and no `open` implementation, GApplication has nowhere to put them, never
+>   reaches `activate`, and no window appears.
+>
+> The work: set `Gio.ApplicationFlags.HANDLES_OPEN`, implement `do_open()` routing files into the
+> existing source mechanism, add `MimeType=` and `%U`. Roughly thirty lines. It was held back
+> because it is application work in a packaging phase, and Phase 3 was one confirmed transcript from
+> its stopping condition — closing the phase cleanly beat landing a half-finished feature in it.
+>
+> **The MIME list is already known.** These are the types the hand-written service menu matched
+> successfully in Dolphin for months before Shoki existed, so they are observed rather than guessed.
+> Wildcards such as `audio/*` work in a KDE service menu but are NOT valid in an application's
+> `MimeType=` key, which needs concrete names:
+>
+> ```
+> audio/mpeg;audio/mp4;audio/x-m4a;audio/wav;audio/x-wav;audio/ogg;audio/flac;
+> audio/x-flac;audio/webm;audio/opus;video/mp4;video/webm;video/x-matroska;
+> ```
+>
+> It does not cover everything Shoki's file picker offers — `video/quicktime`, `video/x-msvideo`,
+> `video/x-ms-wmv` and `audio/aac` are absent — so treat it as a verified floor, not a finished
+> list. Check any addition against `/usr/share/mime/` rather than adding it from memory.

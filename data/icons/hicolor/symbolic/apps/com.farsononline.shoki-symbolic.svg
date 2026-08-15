@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <title>Shoki</title>
+  <!-- Symbolic icon: 16x16 nominal, monochrome, recoloured by GTK.
+       No kanji and no fine detail - at this size the metaphor has to be the nib
+       and the waveform alone. Every coordinate is a whole pixel, and nothing is
+       thinner than 2px except the nib tip itself, per GNOME's UI icon
+       guidelines ("2px strokes for the main features... 1px strokes avoided").
+       Filled paths rather than strokes, so scaling cannot thin them. -->
+
+  <!-- Waveform stubs, 2px tall, abutting the nib's flanks at x=5 and x=11. -->
+  <path d="M0 7h5v2H0zM11 7h5v2h-5z"/>
+
+  <!-- Nib with the slit as a real hole (fill-rule="evenodd"), so it reads
+       correctly whatever colour GTK recolours the icon to - the design must not
+       depend on a light-versus-dark relationship. Slit walls are 2px each. -->
+  <path fill-rule="evenodd" d="M8 1l3 4v5l-3 4-3-4V5zM7 6h2v4H7z"/>
+</svg>

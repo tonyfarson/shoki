@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Shoki
+GenericName=Transcription
+Comment=Transcribe audio and video with a whisper.cpp server
+Exec=shoki
+Icon=com.farsononline.shoki
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=transcribe;transcription;speech;subtitles;captions;whisper;
+StartupNotify=true

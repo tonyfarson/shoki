@@ -1,6 +1,7 @@
 """Application entry point for Shoki."""
 
 import os
+import shutil
 import sys
 
 import gi
@@ -12,6 +13,7 @@ gi.require_version("Soup", "3.0")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Soup  # noqa: E402
 
+from shoki import __version__  # noqa: E402
 from shoki.transcribe import (  # noqa: E402
     TranscriptionCancelled,
     DEFAULT_ENDPOINT,
@@ -23,6 +25,9 @@ from shoki.transcribe import (  # noqa: E402
 )
 
 APP_ID = "com.farsononline.shoki"
+
+# One constant so the About dialog and the file-manager row cannot drift.
+PROJECT_URL = "https://github.com/tonyfarson/shoki"
 
 # What the picker offers. Whether the server can actually decode any given one
 # depends on it being started with --convert. See docs/ROADMAP.md.
@@ -189,6 +194,7 @@ class ShokiPreferences(Adw.PreferencesDialog):
         page.add(self._build_output_group())
         page.add(self._build_destination_group())
         page.add(self._build_subtitle_group())
+        page.add(self._build_integration_group())
         page.add(self._build_appearance_group())
 
     # ---- groups -----------------------------------------------------------
@@ -304,6 +310,67 @@ class ShokiPreferences(Adw.PreferencesDialog):
             "split-on-word", split_on_word, "active", Gio.SettingsBindFlags.DEFAULT
         )
         group.add(split_on_word)
+
+        return group
+
+    def _build_integration_group(self):
+        """Tells the user the right-click exists, and what governs it.
+
+        Nothing here is a setting. The service menu has no configuration of its
+        own -- it reads the values above at runtime -- so this is a status row
+        rather than a switch, and there is nothing for it to link to.
+
+        Presence is tested by looking for the helper on PATH rather than for the
+        .desktop file, because the helper is what actually does the work. Under
+        Flatpak it will not be found, the host binary being outside the sandbox,
+        and saying so plainly beats showing nothing.
+
+        An affordance only the author knows about is not a feature -- the same
+        lesson drag and drop taught in Phase 2.
+        """
+        group = Adw.PreferencesGroup(
+            title="File manager integration",
+            description="Transcribing straight from a file manager, without opening Shoki.",
+        )
+
+        installed = shutil.which("shoki-transcribe") is not None
+
+        if installed:
+            subtitle = (
+                "Right-click an audio or video file and choose Send to Whisper. It uses "
+                "the endpoint, destination and output format set above."
+            )
+        else:
+            # Deliberately not "you are sandboxed": the helper is equally absent
+            # when running from a source checkout, and a message that guesses
+            # wrong about why is worse than one that only reports what it knows.
+            subtitle = (
+                "Not detected. The helper ships with Shoki's native package. A standalone "
+                "version, for use alongside a Flatpak install, is on the project page."
+            )
+
+        row = Adw.ActionRow(
+            title="Right-click transcription",
+            subtitle=subtitle,
+            subtitle_lines=0,
+        )
+
+        if not installed:
+            # GtkLinkButton rather than GtkUriLauncher: the launcher is async and
+            # needs a callback, a finish call, and a live reference kept for the
+            # duration -- three things to get wrong for one hyperlink.
+            link = Gtk.LinkButton(
+                uri=PROJECT_URL,
+                label="Get it",
+                valign=Gtk.Align.CENTER,
+            )
+            link.update_property(
+                [Gtk.AccessibleProperty.LABEL],
+                ["Open the Shoki project page"],
+            )
+            row.add_suffix(link)
+
+        group.add(row)
 
         return group
 
@@ -514,6 +581,7 @@ class ShokiWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Preferences", "app.preferences")
         menu.append("Keyboard Shortcuts", "app.shortcuts")
+        menu.append("About Shoki", "app.about")
         menu.append("Quit", "app.quit")
 
         button = Gtk.MenuButton(
@@ -1283,6 +1351,7 @@ class ShokiApplication(Adw.Application):
         for name, handler in (
             ("preferences", self._on_preferences),
             ("shortcuts", self._on_shortcuts),
+            ("about", self._on_about),
             ("quit", self._on_quit),
         ):
             action = Gio.SimpleAction.new(name, None)
@@ -1314,6 +1383,30 @@ class ShokiApplication(Adw.Application):
             )
 
         dialog.add(section)
+        dialog.present(self.props.active_window)
+
+    def _on_about(self, _action, _param):
+        """AdwAboutDialog rather than AdwAboutWindow.
+
+        The dialog form is the current one, and it matches AdwPreferencesDialog
+        and AdwShortcutsDialog already in use here -- all three then present the
+        same way, inside the window rather than as a separate toplevel.
+
+        The version is read from shoki.__version__ rather than restated, so the
+        About box cannot drift from the package.
+        """
+        dialog = Adw.AboutDialog(
+            application_name="Shoki",
+            application_icon=APP_ID,
+            developer_name="Tony Farson",
+            version=__version__,
+            comments="A control surface for a whisper.cpp transcription server.",
+            website=PROJECT_URL,
+            issue_url=f"{PROJECT_URL}/issues",
+            developers=["Tony Farson"],
+            copyright="\u00a9 2026 Tony Farson",
+            license_type=Gtk.License.MIT_X11,
+        )
         dialog.present(self.props.active_window)
 
     def _on_preferences(self, _action, _param):

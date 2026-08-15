@@ -506,63 +506,274 @@ The decoupling: the service menu is a **standalone script that never launches Sh
 transcribe, done. Because the script is not sandboxed, the Flatpak never needs to read arbitrary
 files handed to it by the file manager, and therefore never needs broad filesystem access.
 
-Native packages — pacman first, then `.deb` and `.rpm`:
+### Build system — Meson
 
-- [ ] Ship the application, the helper script, and the `.desktop` service menu
-- [ ] Install the GSettings schema system-wide, so the script can read Shoki's settings directly with
+No deliverable below named this, and every one of them rests on it. Added 2026-08-14:
+`meson.build`, `src/meson.build`, `src/shoki.in`, `data/meson.build`.
+
+- **`meson_version: '>= 0.59.0'`, not the 1.12.0 that happens to be installed.** 0.59.0 is the real
+  floor — `update_desktop_database` in `gnome.post_install()` is the highest requirement in use.
+  Declaring the installed version would lock out the `.deb` and `.rpm` builders this phase
+  anticipates; Ubuntu 24.04 LTS ships meson 1.3.2.
+- **`project()` declares no language.** Shoki is pure Python; naming one would make Meson demand a C
+  compiler in order to copy files.
+- **Shoki installs to `pkgdatadir`, not `site-packages`** — `/usr/share/shoki/shoki/*.py` plus a
+  generated `/usr/bin/shoki` that does `sys.path.insert(1, '@PKGDATADIR@')`. Inside a Flatpak the
+  interpreter is the runtime's `/usr/bin/python3` while the app lives under `/app`, so
+  `/app/lib/pythonX.Y/site-packages` is not on that interpreter's default path. One mechanism then
+  works under `/usr`, under `/app`, and under a throwaway `--prefix`. The cost is that `import shoki`
+  from a REPL does not work, which nobody wants from a GUI app.
+- **Python modules are listed explicitly, never globbed.** Adding one is a deliberate edit, and
+  `__pycache__` can never be installed by accident.
+- **Validation runs as `meson test`**, so `makepkg`'s `check()` stops a build that would otherwise
+  ship a malformed desktop file or schema.
+
+> **`gnome.post_install()` scripts are skipped when `DESTDIR` is set.** A plain `meson install`
+> prints "Compiling GSettings schemas"; `makepkg` prints "Skipping custom install script because
+> DESTDIR is set". Both are correct — the package's own pacman hooks do the refresh on the target
+> machine. Expect the difference rather than debugging it.
+
+### Native package
+
+- [x] Ship the application, the helper script, and the `.desktop` service menu (2026-08-14).
+      `build-aux/PKGBUILD`, deliberately not at the repo root: `makepkg` creates `src/` and `pkg/`
+      beside the PKGBUILD, and at the root that `src/` would collide with Shoki's own source
+      directory. It builds the working tree via `$startdir/..`, which makes it a local package
+      rather than an AUR-ready one — there is no `v0.1.0` tag yet, and the tag waits on real daily
+      use rather than on a checklist.
+- [x] Install the GSettings schema system-wide, so the script can read Shoki's settings directly with
       `gsettings get com.farsononline.shoki endpoint-url`. One settings dialog governs both, and they
-      cannot drift.
+      cannot drift. (2026-08-14)
+- [x] Icon, pulled forward from Phase 4 (2026-08-14). Two SVGs, not a ladder of PNGs — see Phase 4.
+- [x] About dialog, `Adw.AboutDialog`, with the repository and issue tracker (2026-08-14). Not on any
+      deliverable list; added because a packaged application that cannot tell you where it came from
+      is not finished. The version is read from `shoki.__version__` so it cannot drift.
+- [x] A status row in Preferences reporting whether the right-click integration is present
+      (2026-08-14). Not a setting — the service menu has no configuration of its own. Presence is
+      tested with `shutil.which("shoki-transcribe")` rather than by looking for the `.desktop` file,
+      because the helper is what does the work.
 
-Flatpak:
+`.deb` and `.rpm` are not started and are not required by the stopping condition.
 
-- [ ] Ships the GUI. No broad filesystem permission required.
-- [ ] An "Install Dolphin integration" button copies **bundled** files into
-      `~/.local/share/kio/servicemenus/` and marks the `.desktop` executable.
-- [ ] The schema lives inside the sandbox and is invisible to a host script, so the script falls back
-      to its own built-in defaults. Graceful degradation, not a separate code branch.
+### Corrections to this section, made 2026-08-14
 
-Rules that apply to both:
+Four claims written here before anything was built turned out to be wrong.
 
-- **No sudo, ever.** Plasma 6 reads service menus from `~/.local/share/kio/servicemenus/` — the
-  user's own home directory. That is also why the `.desktop` file must be executable: the directory
-  is not a system-authorised location and Plasma silently ignores non-executable entries there.
+> **The executable-bit rule is narrower than this document claimed.** It previously said flatly that
+> the `.desktop` file must be executable. KDE's own documentation ties that to *unauthorised* user
+> locations — a Get-Hot-New-Stuff install under `~/.local/share/`. `/usr/share/kio/servicemenus/` is
+> system data and already authorised, so the packaged file is installed `0644` and works.
+
+> **There is no per-user setup step, and there could not be one.** The expectation that installation
+> would open some configuration for the user does not survive contact with pacman: a `post_install`
+> scriptlet runs as root, non-interactively, with no session and no display. It cannot open a window,
+> and it must not write into anyone's home directory. None of that matters, because a service menu in
+> `/usr/share/kio/servicemenus/` is live for every user the moment the package lands.
+
+> **There is no Dolphin configuration to link to from Preferences.** The service menu has no settings
+> of its own; it reads Shoki's, so Shoki's Preferences *is* the configuration and a link would point
+> at itself. The only other surface — Dolphin's enable/disable list — has no standalone settings
+> module: `kcmshell6 --list` offers only `kcm_kded`, which is KDE's background daemons and unrelated.
+> Verified on Otachi 2026-08-14.
+
+> **"The script falls back to its own built-in defaults. Graceful degradation" was too kind.**
+> Defaults alone leave a Flatpak user's right-click *unconfigurable* — it works only for someone who
+> happens to want `127.0.0.1:8080` and our idea of a destination folder. That is not degradation, it
+> is a feature that does not work. The agreed replacement is a lookup chain keyed on which surface
+> exists, so each install type has exactly one source of truth:
+>
+> 1. GSettings, if the schema is readable — native. Preferences governs, and cannot drift.
+> 2. `~/.config/shoki/servicemenu.conf`, if not — Flatpak. The user edits a shipped example.
+> 3. Built-in defaults, if neither.
+
+### Flatpak, .deb and .rpm — moved to Phase 4
+
+Originally listed here. Split out on 2026-08-14 when the author decided on a public release: three
+package formats plus file-manager support for the desktops those formats land on is a phase of its
+own, not a tail on this one.
+
+### Rules that apply to both
+
+- **No sudo, ever.** Plasma 6 reads user service menus from `~/.local/share/kio/servicemenus/`, and
+  system ones from `/usr/share/kio/servicemenus/`, which a package writes during its own privileged
+  install.
 - **Never download and execute.** Fetching a script at runtime and running it is remote code
   execution by design, breaks offline installs, and bypasses package verification. The files are
   tiny — bundle them.
 - The script must always fall back to defaults if `gsettings` fails. A right-click that silently does
-  nothing is the worst available failure mode.
-- Settings meaningful to the right-click path: endpoint, destination, output format, translate. Not
-  the initial prompt, which is per-file and meaningless without someone to type it.
+  nothing is the worst available failure mode. Every path through `shoki-transcribe` ends in a
+  notification for the same reason.
+- Settings meaningful to the right-click path: endpoint, destination, output format. Not the initial
+  prompt, which is per-file and meaningless without someone to type it. **Not translate either** —
+  there is no such GSettings key; it is a per-session switch in the main window. If the right-click
+  ever needs it, a second `[Desktop Action]` is a better answer than a hidden setting.
 
 Sandbox filesystem access follows Flathub's rule: *"Static permissions must be kept to an absolute
 minimum. Applications should rely on XDG Portals... when a suitable XDG portal exists... using the
-portal becomes mandatory instead of static permissions."* The destination directory is therefore
-chosen once through the folder-chooser portal and stored, rather than declared as
-`--filesystem=xdg-documents`.
+portal becomes mandatory instead of static permissions."*
 
 > **Assumption to test, not a promise:** how durably folder access granted through the portal
 > persists across application restarts. The principle is Tier 1; the persistence behaviour needs
 > observing against a real Flatpak build before Phase 2's "default destination" is relied upon.
 
-Open:
+### The helper script must match the application byte for byte
 
-- [ ] Which file managers beyond Dolphin are targeted. Nautilus, Thunar, and Nemo each use a
-      different, incompatible extension mechanism — a per-manager cost, not a shared one.
+`data/shoki-transcribe` reads settings, POSTs, and saves — and its output has to be indistinguishable
+from the application's, or the same audio saved two ways produces two different files and reads as
+Shoki being broken rather than Shoki being different.
+
+Three divergences were found and fixed on 2026-08-14, every one of them invisible on a
+one-segment test file and glaring on a real recording:
+
+1. `text` was not reflowed. `_reflow()` is ported to `awk` as `reflow_text()`.
+2. `srt` and `vtt` did not get `strip("\n")`.
+3. The file did not end with exactly one newline, which `main.py` guarantees.
+
+Confirmed by transcribing a 31 MiB recording both ways and comparing: identical SHA-256, 25,020
+bytes each. The cost, accepted deliberately: the reflow rule now lives in Python *and* in shell, with
+a cross-reference comment in each. Change one, change the other.
 
 Stopping condition: Shoki installs from a native package, appears in the application menu, and
 right-clicking an audio file in Dolphin produces a transcript in the destination folder.
+
+**Met 2026-08-14.** All three, verified on Otachi: `sudo pacman -U` installed
+`shoki-0.1.0-2-any.pkg.tar.zst`, Shoki appeared in the application menu with its icon, and
+"Send to Whisper" on Dolphin's top-level context menu wrote a transcript to
+`~/Nextcloud/Documents/Transcriptions/`.
+
+Status: ✅ Complete 2026-08-14. Native package only, by design — the other formats are Phase 4.
+
+---
+
+## Phase 4 — Broader Packaging and File Manager Support
+
+Goal: Shoki installs on Debian- and Fedora-based systems and from a Flatpak, and the right-click
+works on the file managers those systems actually ship.
+
+Created 2026-08-14, when the author decided on a public release. Phase 3 deliberately did one
+package format on one desktop, end to end. This phase is the breadth.
+
+### Flatpak
+
+- [ ] Manifest `build-aux/com.farsononline.shoki.yml`, on an `org.gnome.Platform` runtime. Meson
+      already does the install, so the manifest itself is thin.
+- [ ] Ships the GUI. No broad filesystem permission required.
+- [ ] The destination directory is chosen once through the folder-chooser portal and stored.
+- [ ] The file-manager helper is offered as a **link to a standalone version**, not as an
+      "Install Dolphin integration" button that copies bundled files into the user's home. Revised
+      2026-08-14: the button was more machinery than a URL. Preferences already carries that link
+      (`PROJECT_URL` in `main.py`); it points at the project page and should point at the helper's
+      own home once it has one.
+- [ ] Implement the config-file rung of the lookup chain — see Phase 3's corrections. Without it a
+      Flatpak user's right-click is unconfigurable.
+
+> **The unknown that could be the whole job.** GTK4's file dialog goes through the portal
+> automatically inside a sandbox, so *choosing* a destination should work. But Shoki **stores** that
+> path in GSettings and writes to it on every later run, including from a batch with no dialog in
+> sight. Whether a portal grant survives an application restart is exactly what this roadmap has
+> flagged since Phase 3 as *"an assumption to test, not a promise."* If it does not persist, that is
+> not a packaging bug — it is a change to how Shoki remembers its destination, and it lands in
+> `main.py`.
+
+### Debian and Fedora packages
+
+- [ ] `.deb`
+- [ ] `.rpm`
+
+Both wrap the same Meson install. The meson floor was set to `>= 0.59.0` in Phase 3 precisely so
+these stay possible — Ubuntu 24.04 LTS ships meson 1.3.2, and declaring the version that happened to
+be on the development machine would have locked them out.
+
+> **"Official repos" is two very different jobs.** Building a `.deb` and a `.rpm` is packaging work
+> and belongs here. Getting them *into* Debian or Fedora proper is a social process — a Debian
+> Developer sponsor, or a Fedora package review — measured in months and largely out of the
+> packager's control. That half is Phase 6, and it should be sized honestly rather than folded in
+> here as if it were a build step.
+
+### File manager support
+
+The helper script is the constant. It knows nothing about any file manager, reads its settings at
+runtime, and takes paths or `file://` URLs. **Every file manager below needs a way to invoke it, not
+a reimplementation of it.** That is what makes this phase affordable.
+
+| File manager | Ships with | Mechanism | System-wide install? |
+|---|---|---|---|
+| Dolphin | KDE Plasma | `.desktop`, `Type=Service` | ✅ `/usr/share/kio/servicemenus/` |
+| Nautilus | GNOME — Ubuntu, Fedora Workstation | executable script, paths via environment | ❌ `~/.local/share/nautilus/scripts/` only |
+| Nemo | Cinnamon — Linux Mint | `.nemo_action`, declarative | Believed yes; unverified |
+| Thunar | Xfce — Xubuntu, Mint Xfce | custom action in `uca.xml` | ❌ a user config file that must be merged |
+| COSMIC Files | Pop!_OS | none confirmed | — |
+
+- [ ] Nautilus
+- [ ] Nemo
+- [ ] Thunar
+- [ ] COSMIC Files, if it is possible at all
+
+> **The architectural problem, and it is not the one anticipated.** Phase 3 assumed the cost of a
+> second file manager was writing a second integration. It is not — Nemo's actions are close cousins
+> of KDE's service menus, and Nautilus takes an ordinary executable script. The real problem is that
+> **Nautilus and Thunar have no system-wide location.** A `.deb` cannot install into a user's home,
+> and Thunar's actions live in a config file that would have to be *merged* rather than dropped in.
+>
+> So the "Install integration" button rejected for the Flatpak comes back — for a different reason.
+> Not sandboxing, but the absence of a system path. Copying bundled files into the user's own home,
+> on an explicit click, remains categorically different from downloading and executing something,
+> which stays forbidden.
+>
+> Nautilus also puts scripts under a **Scripts** submenu rather than at the top level, so the GNOME
+> experience is inherently one click deeper than the KDE one. Worth knowing before promising parity.
+
+> **Source tiering, stated plainly.** Dolphin's mechanism is Tier 1 and verified on Otachi. The
+> Nautilus scripts directory and its environment variables come from Ubuntu community documentation
+> — Tier 3, and it needs confirming against GNOME's own docs and a real Nautilus before anything is
+> built on it. Nemo's and Thunar's mechanisms are Tier 3/4 and unverified. COSMIC Files' feature
+> request (`pop-os/cosmic-files` issue #1445) is *closed*, but whether it was closed as implemented
+> or declined could not be determined — check a current build before promising anything.
+
+Deliberately out of scope: PCManFM, Caja, Krusader, and anything else outside the desktops that ship
+on mainstream Debian- and Fedora-derived distributions.
+
+Stopping condition: Shoki installs from a Flatpak, a `.deb` and an `.rpm`, and right-click
+transcription works on Dolphin, Nautilus and Nemo.
 
 Status: ⏳ Not started
 
 ---
 
-## Phase 4 — Polish for Release
+## Phase 5 — Polish for Release
 
 Goal: the project is presentable to strangers. Nothing is published yet.
 
 Deliverables:
 
-- [ ] Custom icon — proper SVG following the relevant icon guidelines
+- [x] Custom icon (2026-08-14). Pulled forward into Phase 3 — a packaged application wearing a
+      generic placeholder does not feel installed, and the icon turned out not to block anything, so
+      there was no reason to wait.
+
+      **Two SVGs, not a ladder of PNGs.** GNOME's HIG asks for one full-colour icon drawn in a
+      128×128 area plus one symbolic version; the PNG-size-ladder model is pre-GTK4. Shipped as
+      `icons/hicolor/scalable/apps/com.farsononline.shoki.svg` and
+      `icons/hicolor/symbolic/apps/com.farsononline.shoki-symbolic.svg`. There are no separate
+      light and dark variants either — the symbolic icon is monochrome and GTK recolours it.
+
+      **The kanji are not in the icon.** 書記 is the mark, but 書 alone is ten strokes: at 32×32
+      those land under a pixel each and turn to grey. The icon is the nib and waveform; the
+      characters belong where they are rendered large — About, the README, the repository page.
+
+      The full-colour icon inherits the reference artwork with three fixes: the left waveform tail
+      was 2px against the right's 4px and vanished below 48px; the pen slit was a hardcoded
+      `#303238`, the gradient's *top* colour, while the nib sits where the gradient has moved well
+      past it — it now samples the same gradient via `gradientUnits="userSpaceOnUse"`; and there was
+      no `<title>` for screen readers. The symbolic version drops everything but the nib and two
+      waveform stubs, on whole-pixel coordinates, with the slit as a real hole so it survives being
+      recoloured either way.
+
+      > **A stale-icon episode that is not worth documenting for users.** Installing a `.desktop`
+      > file whose `Icon=` pointed at a not-yet-existing file made every Plasma process cache the
+      > failure, and clearing it took `kbuildsycoca6`, deleting `~/.cache/icon-cache.kcache`,
+      > restarting plasmashell, and restarting KRunner separately. That window is an artefact of
+      > building in two steps. A real install lands the desktop entry and its icon in one
+      > transaction, so the first lookup succeeds and there is nothing stale to clear.
 - [ ] Appstream metainfo `com.farsononline.shoki.metainfo.xml`, validating cleanly with
       `appstreamcli validate`
 - [ ] Screenshots — 2–3, consistent window size, meaningful content, no personal data
@@ -579,29 +790,52 @@ Status: ⏳ Not started
 
 ---
 
-## Phase 5 — Public Distribution (Optional)
+## Phase 6 — Public Distribution
 
 Goal: Shoki is available to Linux users who did not build it.
 
-> **Warning:** This creates an ongoing maintenance obligation. Users file issues, request features,
-> and expect updates. Only proceed if being a maintainer is genuinely wanted. Stopping after Phase 4
-> is a perfectly good outcome.
+**Decided 2026-08-14: yes.** This supersedes the 2026-08-13 entry that deferred the decision until
+after Phase 3.
 
-Decided 2026-08-13: **the decision is deferred until after Phase 3, not taken now.** Deferring it is
-deliberate rather than an omission — the information that would settle it does not exist yet.
+> **Warning, unchanged and now accepted.** This creates an ongoing maintenance obligation. Users
+> file issues, request features on their own timelines, and expect updates when their distribution
+> moves under them. Stopping after Phase 5 was always a perfectly good outcome; the author has
+> chosen otherwise, knowingly.
 
-Decide it against these criteria, once Phase 3 has produced real packages:
+The four criteria written on 2026-08-13 were meant to be answered by evidence from real packages.
+Three of them still have not been, because Phase 4 has not run yet. Recording that honestly:
 
-- [ ] Did the Flatpak survive Phase 3 without broad static permissions? If it needed them, Flathub
-      review will be a fight, and that changes the answer.
-- [ ] Is the GUI-only Flatpak — no right-click integration — actually worth shipping to strangers, or
-      does it under-deliver the thing that makes Shoki worth having?
-- [ ] Does the audience want a Flatpak at all? An AUR package may serve the realistic user base
-      better, given that every user must already be running their own whisper.cpp server.
-- [ ] Is maintainership wanted? This is a preference, not a technical question, and it is the one
-      that actually decides.
+- **Did the Flatpak avoid broad static permissions?** Unanswered — no Flatpak exists. The design
+  intends portals only, but intent is not evidence, and Flathub review is where it gets tested.
+- **Is a GUI-only Flatpak worth shipping?** Partly answered by Phase 4's approach: it is not
+  GUI-only in effect, because the file-manager helper is offered alongside it as a standalone
+  download rather than being absent.
+- **Does the audience want a Flatpak at all, versus an AUR package?** Unanswered. Every Shoki user
+  must already run their own whisper.cpp server, which skews the realistic audience toward people
+  comfortable with the AUR.
+- **Is maintainership wanted?** **Yes.** This was always a preference rather than a technical
+  question, and it is the one that actually decided the matter.
 
-Status: ⏳ Deferred until after Phase 3
+Targets, in ascending order of how much of the work is out of the author's hands:
+
+- [ ] **Flathub.** Self-service submission, a manifest, and a review that is technical and
+      tractable. The most likely to land first.
+- [ ] **AUR.** The PKGBUILD becomes a proper source-tarball build against a tagged release rather
+      than the `$startdir/..` working-tree build Phase 3 uses. Cheap, and arguably the best match
+      for the actual audience.
+- [ ] **Debian.** Requires a Debian Developer to sponsor the package. Months, and the timeline is
+      not the author's to set.
+- [ ] **Fedora.** Requires a package review by an existing packager. Same shape, same caveat.
+
+> **`v0.1.0` must be tagged before any of this.** Every route above builds from a release, not from
+> a branch. The tag is still gated on the Phase 2 stopping condition — Shoki being used for real
+> work and feeling finished rather than prototype-ish — which is a judgement, not a checklist.
+
+Prerequisite: Phase 5 in full. A stranger-ready README, appstream metainfo that validates,
+screenshots, and a `CONTRIBUTING.md` are not polish here; they are submission requirements. Flathub
+in particular will reject a manifest without valid metainfo.
+
+Status: ⏳ Not started
 
 ---
 

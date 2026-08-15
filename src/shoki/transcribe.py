@@ -226,6 +226,9 @@ def _extract_transcript(body, response_format: str) -> str:
     return decoded.strip("\n")
 
 
+# NOTE: reflow_text() in data/shoki-transcribe is a shell port of this
+# function. The Dolphin service menu must produce byte-identical output to
+# the application. Change one, change the other.
 def _reflow(text: str) -> str:
     """Rejoin Whisper's one-segment-per-line text into paragraphs.
 
