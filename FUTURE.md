@@ -335,3 +335,43 @@ server-side window decorations.
 > It does not cover everything Shoki's file picker offers — `video/quicktime`, `video/x-msvideo`,
 > `video/x-ms-wmv` and `audio/aac` are absent — so treat it as a verified floor, not a finished
 > list. Check any addition against `/usr/share/mime/` rather than adding it from memory.
+
+### 2026-08-15 — Endpoint discovery: tell the user WHY a request failed
+
+> **Raised during Phase 4, after a fresh Ubuntu install used the shipped default and 404'd.** The
+> default `http://127.0.0.1:8080/inference` is correct — it is upstream whisper.cpp's own route, and
+> `--inference-path` *replaces* it rather than adding an alias, so Tony's
+> `/v1/audio/transcriptions` server has no `/inference`. The default must not change; it would ship
+> broken for everyone running a stock container. The gap is that the user has no way to tell a wrong
+> path from a dead server.
+>
+> **The lever already exists.** `/health` is fixed at the SERVER ROOT and does not move with
+> `--inference-path`. So Shoki can distinguish three states rather than one:
+>
+> - nothing listening at the origin → the server is down or the host/port is wrong
+> - `/health` answers but the configured path 404s → the path is wrong, and Preferences is the fix
+> - both answer → the endpoint is good
+>
+> Two sizes of solution, either worth having:
+>
+> - **Cheap:** on a 404, say which setting to change instead of reporting a bare HTTP error.
+> - **Better:** a Test Connection button in Preferences that probes root-`/health`, then the
+>   configured path, and reports which of the three states it found in one sentence.
+>
+> Deferred because it is `main.py` work raised in the middle of a packaging phase.
+
+### 2026-08-15 — There is no per-media route, and no switcher should be built
+
+> **Asked during Phase 4 and answered before it could become a feature.** The path in
+> `/v1/audio/transcriptions` looks semantic and is not. `--inference-path` takes an arbitrary
+> string — upstream's help text reads `[/inference] Inference path for all requests` — and the
+> server registers exactly ONE inference route at whatever string the operator supplies. There is no
+> `/v1/video/transcriptions` upstream and none can exist unless a second server is started with that
+> flag.
+>
+> Video works because of the `--convert` startup flag, which puts ffmpeg in front of the decoder and
+> transcodes to WAV before whisper sees the file. That is a server flag, not a route, and no API
+> call reports whether it is on.
+>
+> **Recorded so it is not re-proposed.** A media-type endpoint switcher would construct a URL that
+> does not exist and break the one path that currently works.

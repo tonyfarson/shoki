@@ -1,0 +1,8 @@
+#!/usr/bin/make -f
+#
+# Shoki is pure Python; Meson installs it. debhelper's meson buildsystem is
+# named explicitly rather than left to auto-detection, so a future stray
+# CMakeLists or configure script cannot silently change how this builds.
+
+%:
+	dh $@ --buildsystem=meson

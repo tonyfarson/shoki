@@ -24,13 +24,15 @@ you what comes back.
 - App ID: `com.farsononline.shoki`
 - Platform: Linux only
 - License: MIT
-- Current phase: Phase 3 — Packaging. Native package complete and verified; Flatpak not started.
+- Phase 3 — Packaging and Desktop Integration: complete. Installs from a pacman package, with
+  the Dolphin service menu.
+- Next: Phase 4 — Flatpak, `.deb` and `.rpm`, and file-manager support beyond Dolphin.
 - First planned release: `v0.1.0`
 
 The Dolphin service menu is a standalone script that never launches Shoki, which is what
 lets a future Flatpak stay minimally permissioned. In the native package the script reads
 Shoki's own GSettings, so one Preferences dialog governs both the application and the
-right-click, and the two cannot drift. See Phase 3 in `docs/ROADMAP.md`.
+right-click, and the two cannot drift. See Phases 3 and 4 in `docs/ROADMAP.md`.
 
 ## What It Does
 
@@ -51,7 +53,8 @@ Language auto-detection is always on and has no control.
 ## Requirements
 
 Shoki is a client. It needs a whisper.cpp server, running separately, that you can reach
-over HTTP.
+over HTTP. `docs/SERVER.md` records what that server accepts and returns, verified against
+the source rather than assumed.
 
 The reference deployment used during development runs the Vulkan container image:
 
@@ -185,8 +188,9 @@ shoki/
 ├── build-aux/
 │   └── PKGBUILD    Arch package; makepkg is run from this directory
 ├── meson.build     build definition (src/ and data/ have their own)
-├── docs/           project documentation
-│   └── ROADMAP.md  phased development plan
+├── docs/
+│   ├── ROADMAP.md  phased development plan
+│   └── SERVER.md   what the whisper.cpp server accepts and returns
 ├── FUTURE.md       deferred ideas / scope-creep log
 ├── README.md       this file
 ├── LICENSE         MIT

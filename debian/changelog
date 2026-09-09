@@ -1,0 +1,5 @@
+shoki (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- Tony Farson <ajfarson@gmail.com>  Sat, 15 Aug 2026 07:30:00 -0700

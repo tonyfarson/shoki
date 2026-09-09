@@ -1,0 +1,41 @@
+Source: shoki
+Section: sound
+Priority: optional
+Maintainer: Tony Farson <ajfarson@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               meson (>= 0.59.0),
+               ninja-build,
+               desktop-file-utils,
+               libglib2.0-bin
+Standards-Version: 4.7.4
+Homepage: https://github.com/tonyfarson/shoki
+Vcs-Browser: https://github.com/tonyfarson/shoki
+Vcs-Git: https://github.com/tonyfarson/shoki.git
+Rules-Requires-Root: no
+
+Package: shoki
+Architecture: all
+Depends: ${misc:Depends},
+         python3,
+         python3-gi,
+         gir1.2-glib-2.0,
+         gir1.2-gtk-4.0,
+         gir1.2-adw-1,
+         gir1.2-soup-3.0,
+         curl,
+         file,
+         libglib2.0-bin,
+         libnotify-bin
+Description: graphical control surface for a whisper.cpp transcription server
+ Shoki is a GTK4/libadwaita desktop application that sends audio and video
+ files to a whisper.cpp server and saves the transcripts it returns. It puts
+ the server's request parameters -- output format, translation, initial
+ prompt, subtitle tuning -- behind a single window instead of a command line.
+ .
+ A standalone helper, shoki-transcribe, is installed alongside it, together
+ with a KDE service menu so that files can be transcribed by right-click from
+ Dolphin. The helper never launches the application and reads its settings at
+ runtime, so the two share one configuration and cannot drift apart.
+ .
+ Shoki does not include a transcription engine. It requires a reachable
+ whisper.cpp server, which it treats as an external HTTP service.

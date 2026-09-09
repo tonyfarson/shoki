@@ -3,7 +3,7 @@ type: roadmap
 status: active
 project: shoki
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-14
 ---
 
 # Shoki Roadmap
@@ -20,7 +20,7 @@ Core principles:
 - No scope creep — new ideas go to `FUTURE.md`, not into the current phase
 
 Testing backend: whisper.cpp server running on Otachi. See `README.md` for the setup this app
-depends on, and Verified Server Behaviour below for what that server actually accepts.
+depends on, and `docs/SERVER.md` for what that server actually accepts.
 
 ---
 
@@ -59,83 +59,12 @@ else* does?
 
 ---
 
-## Verified Server Behaviour
+## The Server
 
-Confirmed against `examples/server/server.cpp`, `examples/server/README.md`, and `include/whisper.h`
-in `ggml-org/whisper.cpp` on 2026-08-13. This supersedes several claims made earlier in this
-project's documentation.
-
-Routes are registered as `request_path + inference_path`. Defaults: `request_path` empty,
-`inference_path` `/inference`, bound to `127.0.0.1:8080`. Other routes are `GET /`, `GET /health`,
-`POST /load`, and a CORS preflight on the inference path. There is no `/v1/` alias upstream and the
-upstream README makes no OpenAI-compatibility claim.
-
-> **Note:** The endpoint `/v1/audio/transcriptions` used during development comes from the Otachi
-> container's own `--inference-path` flag. That flag *replaces* the default route rather than adding
-> one, which is why `/inference` returns 404 on that server. The 404 is confirmation the flag took
-> effect, not a fault.
-
-The README's list of six request parameters is incomplete. `get_req_parameters()` reads roughly
-thirty form fields:
-
-- Strings — `language`, `prompt`, `response_format`
-- Booleans — `translate`, `diarize`, `tinydiarize`, `detect_language`, `split_on_word`,
-  `no_timestamps`, `token_timestamps`, `carry_initial_prompt`, `suppress_non_speech`, `suppress_nst`,
-  `vad`, `no_language_probabilities`, `debug_mode`
-- Numeric — `offset_t`, `offset_n`, `duration`, `max_context`, `max_len`, `best_of`, `beam_size`,
-  `audio_ctx`, `word_thold`, `entropy_thold`, `logprob_thold`, `no_speech_thold`, `temperature`,
-  `temperature_inc`, and six `vad_*` tuning fields
-- Not read from requests — `threads` and `no_context` are startup options only
-
-`response_format` is branched on five string literals: `text`, `srt`, `vtt`, `verbose_json`, and
-`json` as the default fallback. The `json` reply is shaped `{"text": "..."}` — assumed while writing
-Phase 1, then observed against the running server on 2026-08-13.
-
-Input formats are a property of server *flags*, not of the API. The README states that "WAV Files are
-passed to the inference model via http requests", and it is `--convert` — documented as "Convert
-audio to WAV, requires ffmpeg on the server" — that admits anything else. The Otachi container passes
-it, confirmed 2026-08-13 from its compose command, which is why mp3 and video files work there.
-
-> **Warning:** Shoki cannot detect this. No route reports the server's startup flags. An unflagged
-> whisper.cpp server accepts WAV only, so the file picker's audio-and-video filter is optimistic on
-> anyone else's deployment. Phase 4's README must state the `--convert` requirement plainly.
-
-`GET /health` answers normally while an inference is in flight — measured in Phase 1.
-
-Behaviour that constrains design:
-
-- The server defaults to `language=en`. Auto-detect is not free — the client must send
-  `language=auto` on every request.
-- `detect_language` detects the language and exits, returning no transcript. It is not the
-  auto-detect switch.
-- `translate` is source-to-English only. Whisper's translation task has no target-language
-  parameter. This is a checkbox, never a dropdown.
-- `vad` is a request field, but the VAD model is a startup flag (`-vm`). Toggling `vad` against a
-  server started without one will fail.
-- `tinydiarize` requires a tdrz model at startup; plain `diarize` requires stereo audio.
-- `POST /load` swaps the server's model, reading a `model` form field. There is no endpoint listing
-  available models, the path is server-side, the swap is global across all clients, and upstream
-  warns it loads arbitrary server-side paths.
-- The inference endpoint is blocking. No SSE, chunked encoding, or websockets. Progress percentages
-  and live partial transcripts are impossible without patching the server.
-- **Cancellation works, and the client does stop the server.** Corrected 2026-08-14 — this entry
-  previously said the server example "never wires either to anything client-facing" and that a client
-  "cannot stop the server." Both halves were wrong. `examples/server/server.cpp` wires the abort to
-  the HTTP connection state:
-
-  ```cpp
-  wparams.abort_callback = [](void *user_data) {
-      auto req_ptr = static_cast<const httplib::Request*>(user_data);
-      return req_ptr->is_connection_closed();
-  };
-  wparams.abort_callback_user_data = (void*)&req;
-  ```
-
-  Closing the connection therefore aborts the inference, and the server logs `client disconnected,
-  aborted processing`. Confirmed on Otachi 2026-08-14 against
-  `ghcr.io/ggml-org/whisper.cpp:main-vulkan`: GPU utilisation dropped the instant Cancel was clicked,
-  and that line appeared in the container log. No cancel *route* exists, and none is needed — closing
-  the socket is the mechanism.
+Shoki talks to a whisper.cpp server it does not manage. What that server accepts, what it returns,
+and the behaviour that constrains Shoki's design are documented in **`docs/SERVER.md`** — moved out
+of this file on 2026-08-14, because reference material about an external dependency is not a
+roadmap.
 
 ---
 
@@ -205,7 +134,8 @@ Decisions reached:
     not launch Shoki.
 12. Accessibility is a build standard, not a settings pane. Accessible roles, real labels, full
     keyboard navigation, and respect for system contrast and text-size settings are v0 requirements.
-13. Phase 5 deferred with written criteria rather than decided — see Phase 5.
+13. Public distribution deferred with written criteria rather than decided — later taken on
+    2026-08-14. See Phase 6.
 
 Stopping condition met: Phases 1 and 2 are rewritten and free of unverified claims. Remaining
 assumptions are labelled as assumptions.
@@ -305,7 +235,7 @@ Decided during Phase 1:
   not upload progress but threads. GNOME's threading tutorial states that "the default approach
   should be to never use threads", directing callers to asynchronous operations on the GLib main
   context instead. libsoup is async-native, so Shoki has no worker threads at all. It also adds no
-  Python dependency, which matters across four packaging formats in Phase 3, and its
+  Python dependency, which matters across four packaging formats in Phases 3 and 4, and its
   `send_and_read_async` takes a `GCancellable` — making Phase 2's cancel a documented parameter
   rather than an invention.
 - **`Soup.Multipart.to_message()` writes Content-Type including the multipart boundary.** The body is
@@ -392,8 +322,8 @@ Deliverables:
 
       > **Not audited, only implemented.** No screen reader has been run against Shoki and no
       > contrast check has been done. Roles and labels being present is not the same as the result
-      > being usable with assistive technology. A real pass belongs in Phase 4 alongside the icon
-      > and screenshots.
+      > being usable with assistive technology. A real pass belongs in Phase 5 alongside the
+      > screenshots.
 
 Progress and liveness — three honest indicators, no invented percentages:
 
@@ -417,7 +347,7 @@ Progress and liveness — three honest indicators, no invented percentages:
 Cancel:
 
 - [x] Cancelling a single file closes the connection, which aborts the inference server-side.
-      Verified 2026-08-14 — see Verified Server Behaviour. The UI may say the server stops, because
+      Verified 2026-08-14 — see `docs/SERVER.md`. The UI may say the server stops, because
       it does. (2026-08-14)
 - [x] Cancelling a batch is genuinely effective — remaining files are never sent. Verified
       2026-08-14: cancelling during file 2 of 3 logged file 2 as cancelled and produced no log line
@@ -442,7 +372,7 @@ Output destination and filenames:
 
 > **Note:** under Flatpak the destination is chosen once through the folder-chooser portal and the
 > result stored, rather than declared as a static filesystem permission. That work belongs to
-> Phase 3, not here.
+> Phase 4, not here.
 
 > **Resolved 2026-08-13: reflow `text`, pass everything else through untouched.** The leading space
 > turned out to be an instruction rather than noise. Whisper's tokenizer marks a word-initial token
@@ -498,9 +428,10 @@ the stopping condition is real daily use, not a full checklist.
 
 Goal: Shoki installs as a real application, and right-clicking an audio file transcribes it.
 
-Packaging was resolved on 2026-08-13. **Both native packages and a Flatpak ship**, with no
-compromise on either — a conclusion that only became available once the Dolphin integration was
-decoupled from the application.
+This phase ships **one package format on one desktop, end to end**: a pacman package and the
+Dolphin service menu. Breadth — Flatpak, `.deb`, `.rpm`, and the other file managers — is Phase 4.
+Doing one completely first is what surfaced the byte-identical-output problem and the four wrong
+claims corrected below; a broader first pass would have found them later and in worse company.
 
 The decoupling: the service menu is a **standalone script that never launches Shoki**. Right-click,
 transcribe, done. Because the script is not sandboxed, the Flatpak never needs to read arbitrary
@@ -544,7 +475,7 @@ No deliverable below named this, and every one of them rests on it. Added 2026-0
 - [x] Install the GSettings schema system-wide, so the script can read Shoki's settings directly with
       `gsettings get com.farsononline.shoki endpoint-url`. One settings dialog governs both, and they
       cannot drift. (2026-08-14)
-- [x] Icon, pulled forward from Phase 4 (2026-08-14). Two SVGs, not a ladder of PNGs — see Phase 4.
+- [x] Icon, pulled forward from Phase 5 (2026-08-14). Two SVGs, not a ladder of PNGs — see Phase 5.
 - [x] About dialog, `Adw.AboutDialog`, with the repository and issue tracker (2026-08-14). Not on any
       deliverable list; added because a packaged application that cannot tell you where it came from
       is not finished. The version is read from `shoki.__version__` so it cannot drift.
@@ -557,7 +488,9 @@ No deliverable below named this, and every one of them rests on it. Added 2026-0
 
 ### Corrections to this section, made 2026-08-14
 
-Four claims written here before anything was built turned out to be wrong.
+Three claims written here before anything was built turned out to be wrong. A fourth — that the
+helper falling back to built-in defaults was "graceful degradation" — was about the Flatpak, and
+moved to Phase 4 with the work it concerns.
 
 > **The executable-bit rule is narrower than this document claimed.** It previously said flatly that
 > the `.desktop` file must be executable. KDE's own documentation ties that to *unauthorised* user
@@ -576,23 +509,7 @@ Four claims written here before anything was built turned out to be wrong.
 > module: `kcmshell6 --list` offers only `kcm_kded`, which is KDE's background daemons and unrelated.
 > Verified on Otachi 2026-08-14.
 
-> **"The script falls back to its own built-in defaults. Graceful degradation" was too kind.**
-> Defaults alone leave a Flatpak user's right-click *unconfigurable* — it works only for someone who
-> happens to want `127.0.0.1:8080` and our idea of a destination folder. That is not degradation, it
-> is a feature that does not work. The agreed replacement is a lookup chain keyed on which surface
-> exists, so each install type has exactly one source of truth:
->
-> 1. GSettings, if the schema is readable — native. Preferences governs, and cannot drift.
-> 2. `~/.config/shoki/servicemenu.conf`, if not — Flatpak. The user edits a shipped example.
-> 3. Built-in defaults, if neither.
-
-### Flatpak, .deb and .rpm — moved to Phase 4
-
-Originally listed here. Split out on 2026-08-14 when the author decided on a public release: three
-package formats plus file-manager support for the desktops those formats land on is a phase of its
-own, not a tail on this one.
-
-### Rules that apply to both
+### Rules for the file-manager integration
 
 - **No sudo, ever.** Plasma 6 reads user service menus from `~/.local/share/kio/servicemenus/`, and
   system ones from `/usr/share/kio/servicemenus/`, which a package writes during its own privileged
@@ -607,14 +524,6 @@ own, not a tail on this one.
   prompt, which is per-file and meaningless without someone to type it. **Not translate either** —
   there is no such GSettings key; it is a per-session switch in the main window. If the right-click
   ever needs it, a second `[Desktop Action]` is a better answer than a hidden setting.
-
-Sandbox filesystem access follows Flathub's rule: *"Static permissions must be kept to an absolute
-minimum. Applications should rely on XDG Portals... when a suitable XDG portal exists... using the
-portal becomes mandatory instead of static permissions."*
-
-> **Assumption to test, not a promise:** how durably folder access granted through the portal
-> persists across application restarts. The principle is Tier 1; the persistence behaviour needs
-> observing against a real Flatpak build before Phase 2's "default destination" is relied upon.
 
 ### The helper script must match the application byte for byte
 
@@ -664,21 +573,55 @@ package format on one desktop, end to end. This phase is the breadth.
       2026-08-14: the button was more machinery than a URL. Preferences already carries that link
       (`PROJECT_URL` in `main.py`); it points at the project page and should point at the helper's
       own home once it has one.
-- [ ] Implement the config-file rung of the lookup chain — see Phase 3's corrections. Without it a
-      Flatpak user's right-click is unconfigurable.
+- [ ] Give the helper a configuration surface that does not depend on Shoki. Falling back to
+      built-in defaults alone leaves a Flatpak user's right-click *unconfigurable* — it works only
+      for someone who happens to want `127.0.0.1:8080` and our idea of a destination folder. One
+      lookup chain, keyed on which surface exists, so each install type has exactly one source of
+      truth:
+      1. GSettings, if the schema is readable — native. Preferences governs, and cannot drift.
+      2. `~/.config/shoki/servicemenu.conf`, if not — Flatpak. The user edits a shipped example.
+      3. Built-in defaults, if neither.
+
+Sandbox filesystem access follows Flathub's rule: *"Static permissions must be kept to an absolute
+minimum. Applications should rely on XDG Portals... when a suitable XDG portal exists... using the
+portal becomes mandatory instead of static permissions."*
 
 > **The unknown that could be the whole job.** GTK4's file dialog goes through the portal
 > automatically inside a sandbox, so *choosing* a destination should work. But Shoki **stores** that
 > path in GSettings and writes to it on every later run, including from a batch with no dialog in
-> sight. Whether a portal grant survives an application restart is exactly what this roadmap has
-> flagged since Phase 3 as *"an assumption to test, not a promise."* If it does not persist, that is
+> sight. Whether a portal grant survives an application restart has been flagged since 2026-08-13
+> as an assumption to test rather than a promise. If it does not persist, that is
 > not a packaging bug — it is a change to how Shoki remembers its destination, and it lands in
 > `main.py`.
 
 ### Debian and Fedora packages
 
-- [ ] `.deb`
-- [ ] `.rpm`
+- [x] `.deb` (2026-08-15). Built and installed on Ubuntu 26.04 LTS; a real transcription ran.
+      `lintian` gives two deferred warnings and one Phase 6 note, nothing else.
+- [x] `.rpm` (2026-08-15). Built and installed on Fedora 44; a real transcription ran.
+      `rpmlint` is clean apart from two dictionary false positives, the same two missing man
+      pages, and four `explicit-lib-dependency` errors that are deliberately kept — see below.
+
+> **What building both actually taught us, 2026-08-15.**
+>
+> - **Debian normalises file permissions; RPM does not.** `dh_fixperms` runs in every debhelper
+>   build. RPM has no equivalent, so a `README.md` that was mode `0600` in the working tree went
+>   into the package unreadable and `rpmlint` caught it. Meson is not the culprit — `install_data`
+>   writes 644 regardless — so the blast radius is exactly the files RPM copies itself, `%doc` and
+>   `%license`. Git records only the executable bit, so a build from a clone was never affected.
+> - **RPM's automatic dependency generator finds nothing in a pure-Python app.** It produced only
+>   `Requires: /usr/bin/bash /usr/bin/python3`, derived from shebangs. Every library dependency is
+>   hand-written and therefore load-bearing. `rpmlint`'s `explicit-lib-dependency` error assumes ELF
+>   linkage and does not apply here; removing those lines would yield a package that installs on a
+>   bare system and dies on first import. Fedora has no `typelib()` provides to use instead.
+> - **Installing on a full desktop proves almost nothing about dependencies.** `dnf` pulled ZERO
+>   extra packages, because Workstation already had them all. Completeness was established by
+>   reading every import in the source instead, not by watching an install succeed.
+> - **Fedora ships introspection typelibs in the main library package**, unlike Debian's separate
+>   `gir1.2-*` packages. `Requires: gtk4` covers `Gtk-4.0.typelib`; `glib2` carries `GLib-2.0`,
+>   `Gio-2.0`, `gsettings` and `glib-compile-schemas`.
+> - **Neither package needs an upstream tarball during development.** `dpkg-buildpackage -b` never
+>   invokes `dpkg-source`, and `rpmbuild --build-in-place` skips `%prep`. Both verified.
 
 Both wrap the same Meson install. The meson floor was set to `>= 0.59.0` in Phase 3 precisely so
 these stay possible — Ubuntu 24.04 LTS ships meson 1.3.2, and declaring the version that happened to
@@ -730,13 +673,59 @@ a reimplementation of it.** That is what makes this phase affordable.
 > request (`pop-os/cosmic-files` issue #1445) is *closed*, but whether it was closed as implemented
 > or declined could not be determined — check a current build before promising anything.
 
+### One install list, every package — decided 2026-08-15
+
+Every package format ships the SAME set of file-manager files. There is no per-distro tailoring, and
+Meson's install list is the single source of truth for all of them.
+
+The reason is that a packager cannot know which desktop the user runs. "Arch users get the KDE
+files" sounds reasonable until an Omarchy box — Arch, Hyprland, and Nautilus as the default handler
+for `inode/directory` — walks in. Any per-distro guess about the desktop is wrong for somebody.
+
+This is already how it behaves: the `.deb` and `.rpm` built on 2026-08-15 both contain
+`/usr/share/kio/servicemenus/shoki-transcribe.desktop` on machines with no KDE. It costs a few
+hundred bytes, and a file manager that is not installed never reads its directory. Dormant, not
+broken.
+
+The four targets split into two categories, and the split is what drives the design:
+
+| | Where it must live | Who installs it |
+|---|---|---|
+| Dolphin, Nemo | `/usr/share/...` | the package, directly |
+| Nautilus, Thunar | the user's home | Shoki, on an explicit click |
+
+### Why a package must not write into a user's home
+
+Worth writing down, because "the installer runs as root, so it can write anywhere" is true and still
+does not help.
+
+- **Which home?** A package is installed once for a machine that may have zero users, one, or fifty,
+  including service accounts and directory-server users who do not exist yet. `dpkg` has no basis
+  for choosing among them.
+- **Users created after installation get nothing.** A file in `/usr/share` serves every user
+  forever, including ones added next year. A file copied into `/home/tony` serves exactly one.
+- **Uninstalling would delete files out of a user's home.** `dpkg` and `rpm` own and track every
+  file they install, and remove them on uninstall. That is the behaviour you want for `/usr` and
+  emphatically not for `/home`.
+- **The home directory may not be readable at install time** — encrypted homes, network homes not
+  yet mounted, or an atomic distro where `/home` is not part of the layered image at all.
+- **A post-install scriptlet cannot ask.** Established in Phase 3 and it applies identically here: it
+  runs as root, non-interactively, with no session and no display.
+
+So the correct actor is the application itself, running as the user, with the user's consent. That
+is the whole justification for the Preferences button — not convenience, and not a workaround.
+
+Note this is a practical and structural argument rather than a quoted prohibition. Debian Policy
+chapter 9 was checked and does not contain an explicit "must not install into /home" rule; it defers
+to the FHS. The reasons above stand on their own.
+
 Deliberately out of scope: PCManFM, Caja, Krusader, and anything else outside the desktops that ship
 on mainstream Debian- and Fedora-derived distributions.
 
 Stopping condition: Shoki installs from a Flatpak, a `.deb` and an `.rpm`, and right-click
 transcription works on Dolphin, Nautilus and Nemo.
 
-Status: ⏳ Not started
+Status: 🔨 In progress. Packaging done 2026-08-15; Flatpak and file managers outstanding.
 
 ---
 
@@ -841,6 +830,12 @@ Status: ⏳ Not started
 
 ## Log of Completed Phases
 
+> **Re-scoped 2026-08-14.** Phase 3 originally carried the Flatpak, and polish was Phase 4.
+> When public release was decided, the three remaining package formats and the other file
+> managers became Phase 4 in their own right, polish moved to Phase 5, and public distribution
+> to Phase 6. Nothing was dropped. The phase sections themselves describe what they are, not
+> what they used to be — git holds that history.
+
 ### Phase 0 — Scaffolding — completed 2026-08-13
 
 Repository initialised at `~/Projects/github/shoki` on branch `main`, pushed to
@@ -859,7 +854,8 @@ Notes worth carrying forward:
 
 ### Phase 0.5 — Scoping Session — completed 2026-08-13
 
-Produced the What Shoki Is, Versioning, Verified Server Behaviour, and Interface Direction sections,
+Produced the What Shoki Is, Versioning, Interface Direction and server-behaviour sections — the
+last of which now lives in `docs/SERVER.md` —
 plus rewritten Phases 1 through 5.
 
 The premise was challenged directly during this phase: given an existing Dolphin service menu that

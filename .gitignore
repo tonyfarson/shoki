@@ -40,6 +40,22 @@ build-aux/pkg/
 *.pkg.tar.zst
 *.pkg.tar.zst.sig
 
+# ---- Debian packaging build artifacts ----
+# dh's meson buildsystem builds in obj-<gnu-triplet>/
+obj-*-linux-gnu/
+debian/.debhelper/
+debian/shoki/
+debian/files
+debian/debhelper-build-stamp
+debian/*.substvars
+debian/*.debhelper.log
+
+# ---- rpmbuild artifacts ----
+# Fedora's %meson macro builds into a vpath dir inside the source tree
+redhat-linux-build/
+*-redhat-linux-build/
+*.rpm
+
 # ---- Flatpak build artifacts ----
 # .flatpak-builder is flatpak-builder's default --state-dir
 # (downloads, build dirs, build cache)
