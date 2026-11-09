@@ -30,7 +30,7 @@ APP_ID = "com.farsononline.shoki"
 PROJECT_URL = "https://github.com/tonyfarson/shoki"
 
 # What the picker offers. Whether the server can actually decode any given one
-# depends on it being started with --convert. See docs/ROADMAP.md.
+# depends on it being started with --convert. See docs/SERVER.md.
 MEDIA_SUFFIXES = (
     "wav", "mp3", "m4a", "flac", "ogg", "oga", "opus", "aac", "wma",
     "mp4", "m4v", "mkv", "mov", "webm", "avi",

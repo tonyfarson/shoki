@@ -12,7 +12,7 @@ Shoki is a client. It does no transcription: it sends a file to a
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) server you run, and shows what comes back.
 
 This file records what that server actually accepts and does. It was extracted from
-`docs/ROADMAP.md` on 2026-08-14 — it is reference material about an external dependency, not a plan,
+the project's planning notes on 2026-08-14 — it is reference material about an external dependency, not a plan,
 and it was the most re-read section in a document nobody could skim.
 
 > **Scope.** The whisper.cpp server itself is not part of Shoki and is not maintained here. This
